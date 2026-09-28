@@ -11,9 +11,8 @@ function validBatch(batch) {
 }
 
 export function validateEncryptedPlaylist(value) {
-  if (!value || value.format !== 'dorado-tv-playlist' || value.version !== 1 ||
-      value.kdf !== 'PBKDF2-SHA256' || value.iterations !== 310000 ||
-      value.cipher !== 'AES-256-GCM' || typeof value.salt !== 'string' ||
+  if (!value || value.format !== 'dorado-tv-playlist' || value.version !== 2 ||
+      value.cipher !== 'AES-256-GCM' || typeof value.salt !== 'undefined' ||
       typeof value.iv !== 'string' || typeof value.data !== 'string') {
     throw new Error('La lista cifrada no tiene el formato esperado.');
   }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { commitPlaylist, getChunk, getManifest, isAdmin, saveChunk } from '../netlify/lib/playlist-store.js';
 import { encryptPlaylist } from '../src/crypto.js';
+import { randomBytes } from 'node:crypto';
 
 function memoryStore() {
   const data = new Map();
@@ -21,7 +22,7 @@ test('only the admin role is authorized for playlist operations', () => {
 test('publishes a complete encrypted upload and replaces it atomically', async () => {
   const store = memoryStore();
   const batch = '12345678-1234-1234-1234-123456789abc';
-  const payload = JSON.stringify(await encryptPlaylist('#EXTM3U\n#EXTINF:-1,Canal\nhttps://example.com/a.ts', 'clave-de-prueba-segura'));
+  const payload = JSON.stringify(await encryptPlaylist('#EXTM3U\n#EXTINF:-1,Canal\nhttps://example.com/a.ts', randomBytes(32).toString('base64')));
   const middle = Math.ceil(payload.length / 2);
   await saveChunk(store, batch, 0, payload.slice(0, middle));
   assert.equal(await getManifest(store), null);

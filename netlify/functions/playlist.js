@@ -1,5 +1,6 @@
 import { getStore } from '@netlify/blobs';
 import { getSession, verifyRequestOrigin } from '../lib/auth.js';
+import { getPlaylistKey } from '../lib/playlist-key.js';
 import { commitPlaylist, getChunk, getManifest, isAdmin, saveChunk } from '../lib/playlist-store.js';
 
 const json = (body, status = 200) => Response.json(body, {
@@ -16,6 +17,9 @@ export default async function playlist(request) {
   const action = url.searchParams.get('action');
   try {
     const store = getStore({ name: 'dorado-tv', consistency: 'strong' });
+    if (request.method === 'GET' && action === 'key') {
+      return json({ key: await getPlaylistKey() });
+    }
     if (request.method === 'GET' && action === 'session') {
       return json({ username: user.username, hasPlaylist: !!(await getManifest(store)) });
     }
