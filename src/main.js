@@ -212,7 +212,9 @@ $('#unlock-form').addEventListener('submit', async (event) => {
   setStatus('Descargando y descifrando la lista…');
   try {
     const response = await fetch('/playlist.enc.json', { cache: 'no-store' });
-    if (!response.ok) throw new Error(response.status === 404 ? 'No está publicado el archivo playlist.enc.json.' : 'No se pudo descargar la lista cifrada.');
+    if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
+      throw new Error('No está publicado el archivo playlist.enc.json.');
+    }
     const plaintext = await decryptPlaylist(await response.json(), password);
     setPlaylist(parsePlaylist(plaintext), 'el archivo cifrado');
     passwordInput.value = '';
