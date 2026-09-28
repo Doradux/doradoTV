@@ -1,24 +1,41 @@
 # Dorado TV
 
-Reproductor web independiente para listas M3U. Permite cargar un archivo local o una URL, buscar y filtrar canales, guardar favoritos por nombre, y reproducir HLS, MPEG-TS o vídeo nativo cuando el navegador admite la emisión.
+Reproductor web independiente para una lista M3U cifrada. Busca y filtra canales, guarda favoritos por nombre y reproduce HLS, MPEG-TS o vídeo nativo cuando el navegador admite la emisión.
 
 ## Desarrollo
 
 ```bash
 npm ci
-npm run dev
 npm test
-npm run build
+npm run dev
 ```
 
-## Despliegue en Netlify
+La app busca `/playlist.enc.json`. Para probar con tu lista en local, genera el archivo cifrado en `public/playlist.enc.json` y arranca Vite. Este archivo está excluido de Git.
 
-Conecta este repositorio a Netlify. `netlify.toml` define `npm run build` como comando de compilación y `dist` como directorio publicado. No hacen falta variables de entorno para la app estática.
+```bash
+npm run encrypt:playlist -- /ruta/a/tu-lista.m3u --out public/playlist.enc.json
+npm run dev
+```
 
-## Listas y privacidad
+El comando pide la clave dos veces sin mostrarla y exige al menos 12 caracteres. Usa una clave larga y única; perderla obliga a volver a cifrar la M3U. La app no guarda la clave. El archivo usa AES-256-GCM con una clave derivada mediante PBKDF2-SHA256 y sal aleatoria. El descifrado ocurre en el navegador.
 
-Importa una lista M3U desde el selector de archivos o mediante una URL. Los archivos se procesan en el navegador y no se suben al sitio. La app no incluye listas, enlaces de proveedores ni credenciales. Solo guarda en `localStorage` los nombres y categorías de favoritos, nunca las URLs de los canales.
+## Subir a Netlify sin publicar la lista en GitHub
 
-Las listas remotas deben permitir solicitudes CORS desde el navegador. En un sitio HTTPS, los directos HTTP pueden ser bloqueados por contenido mixto. HLS y MPEG-TS también dependen de los formatos que admita el navegador y de las cabeceras CORS del proveedor. Para emisiones que necesiten conversión, autenticación del proveedor o relay continuo hace falta un servicio externo; una app estática en Netlify no lo sustituye.
+1. Ejecuta `npm run build`.
+2. Cifra tu M3U en la carpeta de despliegue:
 
-Usa únicamente listas y emisiones para las que tengas autorización.
+   ```bash
+   npm run encrypt:playlist -- /ruta/a/tu-lista.m3u --out dist/playlist.enc.json
+   ```
+
+3. Sube **la carpeta `dist` completa** a tu sitio de Netlify mediante despliegue manual o `netlify deploy --prod --dir=dist`. Así se publican juntos la web y el archivo cifrado. La M3U original y la clave no se suben.
+
+Si conectas Netlify a GitHub y se publica una nueva versión automáticamente desde Git, esa versión no incluirá `playlist.enc.json`, porque está excluido del repositorio. Después de cada despliegue desde Git tendrás que volver a desplegar `dist` con el archivo cifrado, o usar un almacenamiento externo persistente. `netlify.toml` define `npm run build` y `dist`; `public/_headers` evita que Netlify almacene en caché el archivo cifrado.
+
+## Límites de reproducción
+
+En Netlify la web se sirve por HTTPS. Los canales HTTP pueden quedar bloqueados por contenido mixto; los directos HLS y MPEG-TS también dependen del soporte del navegador y de CORS del proveedor. Las emisiones que requieran conversión o relay continuo necesitan un servicio externo.
+
+El modo local por HTTP en la red usa una implementación JavaScript de descifrado cuando Web Crypto no está disponible. Úsalo solo para pruebas en una red de confianza; Netlify usa HTTPS.
+
+Utiliza únicamente listas y emisiones para las que tengas autorización.
