@@ -13,9 +13,11 @@ No publiques `NETLIFY_DB_URL`, `DATABASE_URL` ni `DORADO_ADMIN_PASSWORD`. Para c
 
 ## Subir la lista
 
-Después de iniciar sesión, pulsa el **botón con icono de subida** de la esquina inferior izquierda. Elige tu M3U y escribe una clave para cifrarla (mínimo 12 caracteres). La app cifra el archivo con AES-256-GCM y PBKDF2-SHA256 antes de enviarlo en fragmentos. [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/) guarda únicamente el contenido cifrado y lo conserva entre despliegues. La clave no se guarda: tendrás que introducirla de nuevo para desbloquear los canales al volver a entrar.
+Después de iniciar sesión, pulsa el **botón con icono de subida** de la esquina inferior izquierda y elige tu M3U. La app cifra el archivo con AES-256-GCM antes de enviarlo en fragmentos. [Netlify Blobs](https://docs.netlify.com/build/data-and-storage/netlify-blobs/) guarda únicamente el contenido cifrado y lo conserva entre despliegues. La clave se genera aleatoriamente y se almacena en Netlify Database; solo una sesión de administrador puede obtenerla. Los canales se cargan automáticamente después del login o al volver a abrir la app con una sesión válida.
 
 El botón solo aparece en una sesión de administrador y la función de subida vuelve a comprobar ese rol. Las listas de hasta 24 MB se admiten en el formulario.
+
+Si ya existía una lista cifrada con la versión anterior, súbela una vez más para activar la apertura automática.
 
 ## Desarrollo
 
@@ -33,3 +35,5 @@ El plugin de Netlify para Vite sirve las funciones y una base de datos local. Ap
 Los canales HTTP pueden quedar bloqueados en HTTPS; HLS y MPEG-TS dependen del navegador y de las cabeceras CORS del proveedor. Las emisiones que requieran conversión o relay continuo necesitan un servicio externo.
 
 Utiliza únicamente listas y emisiones para las que tengas autorización.
+
+Cada navegador se conecta directamente al origen del canal. La app no comparte una única conexión entre varios espectadores. Esa función exige un relay persistente fuera de Netlify.

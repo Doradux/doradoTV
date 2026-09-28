@@ -80,12 +80,12 @@ function showLogin(message = '') {
 
 function mountPlayer(session) {
   app.innerHTML = `
-  <div class="mx-auto flex min-h-screen max-w-[1800px] flex-col px-4 pb-8 pt-5 text-slate-100 sm:px-6 lg:px-8">
+  <div class="mx-auto flex min-h-screen w-full flex-col px-4 pb-8 pt-5 text-slate-100 sm:px-6 lg:px-8">
     <header class="mb-6 flex items-center justify-between gap-4 border-b border-slate-800 pb-5">
       <div class="flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-2xl font-black text-slate-950 shadow-lg shadow-amber-500/20" aria-hidden="true">D</span><h1 class="text-2xl font-black tracking-tight text-white">Dorado TV</h1></div>
       <button id="logout" type="button" title="Cerrar sesión" aria-label="Cerrar sesión" class="rounded-xl border border-slate-700 p-2.5 text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(LogOut)}</button>
     </header>
-    <main class="grid flex-1 items-start gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
+    <main class="flex flex-1 flex-col gap-5">
       <section class="min-w-0 space-y-5" aria-label="Reproductor">
         <div class="overflow-hidden rounded-3xl border border-slate-800 bg-black shadow-2xl shadow-black/30">
           <div class="relative aspect-video bg-black">
@@ -93,7 +93,7 @@ function mountPlayer(session) {
             <div id="empty" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950 px-6 text-center">
               <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/25 bg-amber-400/10 text-amber-300">${iconSvg(TvMinimal, 'h-8 w-8')}</div>
               <h2 class="text-lg font-bold text-white">Selecciona un canal</h2>
-              <p class="max-w-md text-sm text-slate-400">Desbloquea tu lista y elige qué quieres ver.</p>
+              <p class="max-w-md text-sm text-slate-400">Elige qué quieres ver.</p>
             </div>
             <div id="loading" class="absolute inset-0 hidden items-center justify-center bg-black/70" role="status"><span class="rounded-full border border-slate-600 bg-slate-900/90 px-4 py-2 text-sm text-white">Cargando emisión…</span></div>
           </div>
@@ -107,15 +107,14 @@ function mountPlayer(session) {
           </div>
         </div>
         <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5"><p class="text-xs font-semibold uppercase tracking-widest text-amber-400">En directo</p><h2 id="now-name" class="mt-1 truncate text-xl font-bold text-white">Ningún canal seleccionado</h2><p id="status" class="mt-2 text-sm text-slate-400" role="status" aria-live="polite"></p></div>
-        <section class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5" aria-labelledby="unlock-title"><h2 id="unlock-title" class="text-lg font-bold text-white">Desbloquear canales</h2><form id="unlock-form" class="mt-4 flex flex-col gap-2 sm:flex-row"><label for="playlist-password" class="sr-only">Clave de la lista</label><input id="playlist-password" type="password" autocomplete="off" required placeholder="Clave de la lista" class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /><button id="unlock" type="submit" class="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">Desbloquear</button></form></section>
       </section>
       <aside class="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70" aria-label="Canales">
         <div class="border-b border-slate-800 p-4 sm:p-5"><div class="mb-4 flex items-center justify-between gap-2"><h2 class="text-lg font-bold text-white">Canales</h2><span id="count" class="text-xs text-slate-400">0 canales</span></div><label for="search" class="sr-only">Buscar canales</label><div class="relative text-slate-400"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">${iconSvg(Search, 'h-4 w-4')}</span><input id="search" type="search" placeholder="Buscar canal o categoría…" class="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /></div><div class="mt-3 flex gap-2"><label for="category" class="sr-only">Filtrar categoría</label><select id="category" class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-amber-400 focus:outline-none"><option value="">Todas las categorías</option></select><button id="favorites" type="button" class="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400" aria-pressed="false">${morphSvg(StarOff, 'favorites-icon', 'h-4 w-4')}<span>Favoritos</span></button></div></div>
-        <div id="channel-list" class="max-h-[580px] min-h-64 space-y-1 overflow-y-auto p-2" role="list"><p class="p-5 text-center text-sm text-slate-400">Los canales aparecerán aquí.</p></div><div id="more-wrap" class="hidden border-t border-slate-800 p-3"><button id="more" type="button" class="w-full rounded-xl border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">Mostrar más canales</button></div>
+        <div id="channel-list" class="grid min-h-64 grid-cols-1 content-start gap-2 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" role="list"><p class="p-5 text-center text-sm text-slate-400">Los canales aparecerán aquí.</p></div><div id="more-wrap" class="hidden border-t border-slate-800 p-3"><button id="more" type="button" class="w-full rounded-xl border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">Mostrar más canales</button></div>
       </aside>
     </main>
     <div class="group fixed bottom-5 left-5 z-40"><button id="upload-open" type="button" aria-label="Subir lista de canales" aria-haspopup="dialog" title="Subir lista de canales" class="flex h-12 w-12 items-center justify-center rounded-full border border-amber-300 bg-amber-400 text-slate-950 shadow-xl shadow-black/40 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">${morphSvg(Upload, 'upload-icon')}</button><span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Subir lista de canales</span></div>
-    <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Selecciona tu archivo y crea una clave para protegerlo.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u,.m3u8,text/plain" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><div><label for="upload-password" class="mb-1.5 block text-sm font-medium text-slate-200">Clave de la lista</label><input id="upload-password" type="password" minlength="12" required autocomplete="new-password" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white focus:border-amber-400 focus:outline-none" /></div><div><label for="upload-confirm" class="mb-1.5 block text-sm font-medium text-slate-200">Repite la clave</label><input id="upload-confirm" type="password" minlength="12" required autocomplete="new-password" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white focus:border-amber-400 focus:outline-none" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
+    <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Selecciona el archivo. Se guardará cifrado y quedará disponible al iniciar sesión.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u,.m3u8,text/plain" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
   </div>`;
 
   const $ = (selector) => app.querySelector(selector);
@@ -132,6 +131,7 @@ function mountPlayer(session) {
   let visible = 80;
   let onlyFavorites = false;
   let playbackToken = 0;
+  let playlistKey = null;
   let savedFavorites = [];
   try { savedFavorites = JSON.parse(localStorage.getItem('dorado-tv:favorites') || '[]'); } catch { localStorage.removeItem('dorado-tv:favorites'); }
   const favorites = new Set(Array.isArray(savedFavorites) ? savedFavorites : []);
@@ -235,24 +235,22 @@ function mountPlayer(session) {
   }
 
   $('#logout').addEventListener('click', async () => { stop(); await api('logout', { auth: true, method: 'POST' }).catch(() => {}); location.reload(); });
-  $('#unlock-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const passwordInput = $('#playlist-password');
-    const button = $('#unlock');
-    button.disabled = true;
-    button.classList.add('opacity-60');
-    setStatus('Desbloqueando canales…');
+  async function getKey() {
+    if (!playlistKey) playlistKey = (await api('key')).key;
+    return playlistKey;
+  }
+  async function loadPlaylist() {
+    setStatus('Cargando canales…');
     try {
       const manifest = await api('manifest');
       const parts = [];
       for (let index = 0; index < manifest.count; index += 1) parts.push(await api('chunk', { query: `&index=${index}`, text: true }));
-      const plaintext = await decryptPlaylist(JSON.parse(parts.join('')), passwordInput.value);
+      const plaintext = await decryptPlaylist(JSON.parse(parts.join('')), await getKey());
       setPlaylist(parsePlaylist(plaintext));
-      passwordInput.value = '';
     } catch (error) {
-      setStatus(error.status === 404 ? 'Aún no hay una lista de canales.' : 'No se pudo desbloquear la lista. Comprueba la clave.', true);
-    } finally { button.disabled = false; button.classList.remove('opacity-60'); }
-  });
+      setStatus(error.status === 404 ? 'Aún no hay una lista de canales.' : error.message?.includes('no compatible') ? 'Vuelve a subir la lista para activar el acceso automático.' : 'No se pudo cargar la lista de canales.', true);
+    }
+  }
   $('#channel-list').addEventListener('click', (event) => {
     const favoriteButton = event.target.closest('[data-favorite]');
     const channelButton = event.target.closest('[data-channel]');
@@ -293,18 +291,16 @@ function mountPlayer(session) {
   $('#upload-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const file = $('#upload-file').files?.[0];
-    const password = $('#upload-password').value;
     const status = $('#upload-status');
     const button = $('#upload-submit');
     if (!file || file.size > 24 * 1024 * 1024) { status.textContent = 'Selecciona un archivo de hasta 24 MB.'; return; }
-    if (password.length < 12 || password !== $('#upload-confirm').value) { status.textContent = 'La clave debe tener 12 caracteres o más y coincidir en ambos campos.'; return; }
     button.disabled = true;
     try {
       status.textContent = 'Preparando lista…';
       const source = await file.text();
       const parsed = parsePlaylist(source);
       if (!parsed.length) throw new Error('El archivo no contiene canales válidos.');
-      const encrypted = JSON.stringify(await encryptPlaylist(source, password));
+      const encrypted = JSON.stringify(await encryptPlaylist(source, await getKey()));
       const count = Math.ceil(encrypted.length / CHUNK_SIZE);
       if (count > 64) throw new Error('La lista es demasiado grande.');
       const batch = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-upload`;
@@ -320,7 +316,8 @@ function mountPlayer(session) {
     } catch (error) { status.textContent = error.message || 'No se pudo subir la lista.'; }
     finally { button.disabled = false; }
   });
-  setStatus(session.hasPlaylist ? 'Introduce la clave de tu lista para ver los canales.' : 'Aún no hay canales. Puedes subir tu lista con el botón inferior.');
+  if (session.hasPlaylist) loadPlaylist();
+  else setStatus('Aún no hay canales. Puedes subir tu lista con el botón inferior.');
 }
 
 showLogin();
