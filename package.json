@@ -1,0 +1,22 @@
+{
+  "name": "dorado-tv",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "hls.js": "^1.6.16",
+    "mpegts.js": "^1.7.3"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "vite": "^5.4.0"
+  }
+}
