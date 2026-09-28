@@ -1,5 +1,6 @@
 import './main.css';
-import { groupsFor, parsePlaylist, safeHttpUrl } from './playlist.js';
+import { decryptPlaylist } from './crypto.js';
+import { groupsFor, parsePlaylist } from './playlist.js';
 
 const app = document.querySelector('#app');
 app.innerHTML = `
@@ -20,7 +21,7 @@ app.innerHTML = `
             <div id="empty" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950 px-6 text-center">
               <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/25 bg-amber-400/10 text-3xl text-amber-300" aria-hidden="true">▶</div>
               <h2 class="text-lg font-bold text-white">Tu televisión, a tu manera</h2>
-              <p class="max-w-md text-sm text-slate-400">Importa una lista M3U para explorar tus canales y empezar a verlos.</p>
+              <p class="max-w-md text-sm text-slate-400">Desbloquea tu lista cifrada para explorar los canales y empezar a verlos.</p>
             </div>
             <div id="loading" class="absolute inset-0 hidden items-center justify-center bg-black/70" role="status"><span class="rounded-full border border-slate-600 bg-slate-900/90 px-4 py-2 text-sm text-white">Cargando emisión…</span></div>
           </div>
@@ -36,13 +37,12 @@ app.innerHTML = `
         <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">
           <p class="text-xs font-semibold uppercase tracking-widest text-amber-400">En directo</p>
           <h2 id="now-name" class="mt-1 truncate text-xl font-bold text-white">Ningún canal seleccionado</h2>
-          <p id="status" class="mt-2 text-sm text-slate-400" role="status" aria-live="polite">Carga tu lista para comenzar.</p>
+          <p id="status" class="mt-2 text-sm text-slate-400" role="status" aria-live="polite">Introduce la clave de tu lista para comenzar.</p>
         </div>
         <section class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5" aria-labelledby="import-title">
-          <div class="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 id="import-title" class="text-lg font-bold text-white">Añadir lista</h2><p class="mt-1 text-sm text-slate-400">Tu lista se procesa en este navegador.</p></div><span class="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300">.m3u · .m3u8</span></div>
-          <label for="file" class="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-950/50 px-5 py-6 text-center transition hover:border-amber-400 focus-within:border-amber-400"><span class="text-sm font-semibold text-white">Seleccionar archivo M3U</span><span class="mt-1 text-xs text-slate-400">No se sube a ningún servidor</span><input id="file" type="file" accept=".m3u,.m3u8,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain" class="sr-only" /></label>
-          <form id="url-form" class="mt-4 flex flex-col gap-2 sm:flex-row"><label for="playlist-url" class="sr-only">URL de la lista M3U</label><input id="playlist-url" type="url" placeholder="O pega una URL HTTPS de lista M3U" class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /><button type="submit" class="rounded-xl bg-slate-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">Cargar URL</button></form>
-          <p class="mt-3 text-xs text-slate-500">Las URLs externas deben permitir acceso CORS. Los directos HTTP pueden quedar bloqueados en una web HTTPS.</p>
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 id="import-title" class="text-lg font-bold text-white">Desbloquear lista</h2><p class="mt-1 text-sm text-slate-400">El archivo cifrado se descifra solo en este navegador.</p></div><span class="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300">AES-256-GCM</span></div>
+          <form id="unlock-form" class="flex flex-col gap-2 sm:flex-row"><label for="playlist-password" class="sr-only">Clave de la lista</label><input id="playlist-password" type="password" autocomplete="off" required placeholder="Clave de la lista" class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /><button id="unlock" type="submit" class="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">Desbloquear</button></form>
+          <p class="mt-3 text-xs text-slate-500">La clave no se guarda. Si recargas la página, tendrás que introducirla de nuevo.</p>
         </section>
       </section>
 
@@ -202,29 +202,25 @@ async function play(channel) {
   }
 }
 
-$('#file').addEventListener('change', async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  try {
-    const source = await file.text();
-    setPlaylist(parsePlaylist(source), file.name);
-  } catch {
-    setStatus('No se pudo leer el archivo seleccionado.', true);
-  }
-  event.target.value = '';
-});
-
-$('#url-form').addEventListener('submit', async (event) => {
+$('#unlock-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const url = safeHttpUrl($('#playlist-url').value.trim());
-  if (!url) { setStatus('Introduce una URL HTTP o HTTPS válida.', true); return; }
-  setStatus('Descargando lista…');
+  const passwordInput = $('#playlist-password');
+  const password = passwordInput.value;
+  const button = $('#unlock');
+  button.disabled = true;
+  button.classList.add('opacity-60');
+  setStatus('Descargando y descifrando la lista…');
   try {
-    const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
-    if (!response.ok) throw new Error('HTTP');
-    setPlaylist(parsePlaylist(await response.text(), url), 'la URL indicada');
-  } catch {
-    setStatus('No se pudo descargar la lista. Comprueba la URL y que el servidor permita CORS.', true);
+    const response = await fetch('/playlist.enc.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error(response.status === 404 ? 'No está publicado el archivo playlist.enc.json.' : 'No se pudo descargar la lista cifrada.');
+    const plaintext = await decryptPlaylist(await response.json(), password);
+    setPlaylist(parsePlaylist(plaintext), 'el archivo cifrado');
+    passwordInput.value = '';
+  } catch (error) {
+    setStatus(error.message === 'No está publicado el archivo playlist.enc.json.' ? error.message : 'No se pudo desbloquear la lista. Comprueba el archivo cifrado y la clave.', true);
+  } finally {
+    button.disabled = false;
+    button.classList.remove('opacity-60');
   }
 });
 
