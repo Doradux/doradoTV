@@ -3,7 +3,7 @@ export const MAX_CHUNKS = 64;
 const BATCH = /^[a-z0-9-]{20,64}$/;
 
 export function isAdmin(user) {
-  return !!user && Array.isArray(user.roles) && user.roles.includes('admin');
+  return !!user && user.role === 'admin';
 }
 
 function validBatch(batch) {

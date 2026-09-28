@@ -14,9 +14,8 @@ function memoryStore() {
 
 test('only the admin role is authorized for playlist operations', () => {
   assert.equal(isAdmin(null), false);
-  assert.equal(isAdmin({ roles: [] }), false);
-  assert.equal(isAdmin({ roles: ['viewer'] }), false);
-  assert.equal(isAdmin({ roles: ['admin'] }), true);
+  assert.equal(isAdmin({ role: 'viewer' }), false);
+  assert.equal(isAdmin({ role: 'admin' }), true);
 });
 
 test('publishes a complete encrypted upload and replaces it atomically', async () => {

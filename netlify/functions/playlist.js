@@ -1,5 +1,5 @@
-import { getUser, verifyRequestOrigin } from '@netlify/identity';
 import { getStore } from '@netlify/blobs';
+import { getSession, verifyRequestOrigin } from '../lib/auth.js';
 import { commitPlaylist, getChunk, getManifest, isAdmin, saveChunk } from '../lib/playlist-store.js';
 
 const json = (body, status = 200) => Response.json(body, {
@@ -8,7 +8,7 @@ const json = (body, status = 200) => Response.json(body, {
 });
 
 export default async function playlist(request) {
-  const user = await getUser();
+  const user = await getSession(request);
   if (!user) return json({ error: 'Inicia sesión.' }, 401);
   if (!isAdmin(user)) return json({ error: 'Acceso no autorizado.' }, 403);
 
@@ -17,7 +17,7 @@ export default async function playlist(request) {
   try {
     const store = getStore({ name: 'dorado-tv', consistency: 'strong' });
     if (request.method === 'GET' && action === 'session') {
-      return json({ email: user.email, hasPlaylist: !!(await getManifest(store)) });
+      return json({ username: user.username, hasPlaylist: !!(await getManifest(store)) });
     }
     if (request.method === 'GET' && action === 'manifest') {
       const manifest = await getManifest(store);
@@ -42,7 +42,7 @@ export default async function playlist(request) {
     }
     return json({ error: 'Ruta no encontrada.' }, 404);
   } catch (error) {
-    if (error.status === 403) return json({ error: 'Origen no permitido.' }, 403);
+    if (error.message === 'Origen no permitido.') return json({ error: error.message }, 403);
     if (/inválid|Faltan fragmentos|formato esperado/.test(error.message || '')) {
       return json({ error: error.message }, 400);
     }
