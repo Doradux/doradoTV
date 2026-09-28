@@ -1,16 +1,15 @@
 # Dorado TV
 
-Televisión privada con acceso de administrador. La lista se cifra en el navegador antes de subirla a Netlify Blobs; la M3U original y la clave no se envían al servidor ni se guardan en GitHub.
+Televisión privada con acceso de administrador mediante nombre de usuario y contraseña. No hay cuentas vinculadas a direcciones de correo ni registro público. La lista se cifra en el navegador antes de subirla a Netlify Blobs; la M3U original y su clave no se envían al servidor ni se guardan en GitHub.
 
 ## Preparar Netlify
 
 1. Conecta `Doradux/doradoTV` a un proyecto de Netlify. `netlify.toml` configura el build y las funciones.
-2. Activa **[Netlify Identity](https://docs.netlify.com/manage/security/secure-access-to-sites/identity/get-started/)** en ese proyecto.
-3. Cambia el registro a **Invite only**. Invita únicamente tu correo desde **Identity → Users**.
-4. En la ficha de ese usuario, asígnale el rol **`admin`**. La app y las funciones rechazan cualquier cuenta sin ese rol.
-5. Abre el enlace de invitación, crea tu contraseña e inicia sesión.
+2. Netlify aprovisiona [Netlify Database](https://docs.netlify.com/build/data-and-storage/netlify-database/) y aplica la migración de `netlify/database/migrations`, que crea las tablas de cuentas y sesiones.
+3. Crea el administrador directamente en la base de datos con `npm run admin:create -- <usuario>`. El script necesita `NETLIFY_DB_URL` o `DATABASE_URL` en el entorno y la contraseña en `DORADO_ADMIN_PASSWORD`. Genera un hash aleatorio con scrypt antes de insertar la cuenta; la contraseña nunca se guarda en el repositorio. Ejecutarlo de nuevo para el mismo usuario cambia la contraseña y cierra las sesiones anteriores.
+4. Inicia sesión con ese usuario. Solo una sesión con rol `admin` puede leer o subir la lista. La sesión usa una cookie `HttpOnly`, `SameSite=Strict` y `Secure` bajo HTTPS.
 
-Netlify Identity debe estar activado y tu cuenta debe tener `admin` para usar la app. No hay formulario de registro público. La web estática es visible, pero los canales y la subida están protegidos por comprobaciones de sesión y rol en las funciones.
+No publiques `NETLIFY_DB_URL`, `DATABASE_URL` ni `DORADO_ADMIN_PASSWORD`. Para conectar el script a producción, obtén la cadena de conexión desde el panel de Netlify Database y pásala al proceso como variable de entorno. El proyecto debe estar vinculado a tu cuenta de Netlify para gestionar allí la base de datos.
 
 ## Subir la lista
 
@@ -24,9 +23,10 @@ El botón solo aparece en una sesión de administrador y la función de subida v
 npm ci
 npm test
 npm run build
+npm run dev -- --port 5199 --strictPort
 ```
 
-Para probar el login y las funciones en local, vincula primero este proyecto con tu sitio de Netlify y ejecuta `npm run dev:netlify`. `npm run dev` inicia solo Vite y puede mostrar el login, pero no ofrece Identity ni las funciones. Netlify Dev utiliza un almacén de Blobs local separado del de producción.
+El plugin de Netlify para Vite sirve las funciones y una base de datos local. Aplica la migración local con `npx netlify database migrations apply` mientras el servidor está activo. Después, obtén la conexión local con `npx netlify database connect --json` y crea el administrador con el script. La base de datos y las listas locales están separadas de producción.
 
 ## Reproducción
 

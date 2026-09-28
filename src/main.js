@@ -1,5 +1,4 @@
 import './main.css';
-import { login, logout, getUser, handleAuthCallback, acceptInvite } from '@netlify/identity';
 import { createMorph, canonicalD } from 'morphicons/dom';
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, PictureInPicture2,
@@ -11,6 +10,7 @@ import { groupsFor, parsePlaylist } from './playlist.js';
 
 const app = document.querySelector('#app');
 const API = '/.netlify/functions/playlist';
+const AUTH_API = '/.netlify/functions/auth';
 const CHUNK_SIZE = 512 * 1024;
 
 function iconSvg(icon, classes = 'h-5 w-5') {
@@ -27,7 +27,7 @@ function escapeHtml(value) {
 }
 
 async function api(action, options = {}) {
-  const response = await fetch(`${API}?action=${encodeURIComponent(action)}${options.query || ''}`, {
+  const response = await fetch(`${options.auth ? AUTH_API : API}?action=${encodeURIComponent(action)}${options.query || ''}`, {
     method: options.method || 'GET',
     body: options.body,
     headers: options.headers,
@@ -52,7 +52,7 @@ function showLogin(message = '') {
         <h1 id="login-title" class="text-2xl font-bold text-white">Iniciar sesión</h1>
         <p class="mt-2 text-sm text-slate-400">Accede a tus canales con tu cuenta.</p>
         <form id="login-form" class="mt-7 space-y-4">
-          <div><label for="email" class="mb-1.5 block text-sm font-medium text-slate-200">Correo electrónico</label><input id="email" name="email" type="email" required autocomplete="username" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white focus:border-amber-400 focus:outline-none" /></div>
+          <div><label for="username" class="mb-1.5 block text-sm font-medium text-slate-200">Usuario</label><input id="username" name="username" type="text" required autocomplete="username" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white focus:border-amber-400 focus:outline-none" /></div>
           <div><label for="password" class="mb-1.5 block text-sm font-medium text-slate-200">Contraseña</label><input id="password" name="password" type="password" required autocomplete="current-password" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white focus:border-amber-400 focus:outline-none" /></div>
           <button id="login-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">Entrar</button>
         </form>
@@ -67,39 +67,13 @@ function showLogin(message = '') {
     button.textContent = 'Entrando…';
     error.textContent = '';
     try {
-      await login(app.querySelector('#email').value.trim(), app.querySelector('#password').value);
+      await api('login', { auth: true, method: 'POST', body: JSON.stringify({ username: app.querySelector('#username').value.trim(), password: app.querySelector('#password').value }), headers: { 'Content-Type': 'application/json' } });
       const session = await api('session');
       mountPlayer(session);
     } catch (cause) {
-      if (cause.status === 403) await logout().catch(() => {});
-      error.textContent = cause.status === 403 ? 'Esta cuenta no tiene acceso.' : 'No se pudo iniciar sesión. Revisa tus datos o la configuración del sitio.';
+      error.textContent = cause.message || 'No se pudo iniciar sesión.';
       button.disabled = false;
       button.textContent = 'Entrar';
-    }
-  });
-}
-
-function showInvite(token) {
-  app.innerHTML = `
-    <main class="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8 text-slate-100">
-      <section class="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-7 shadow-2xl shadow-black/30 sm:p-9" aria-labelledby="invite-title">
-        <div class="mb-7 flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-2xl font-black text-slate-950" aria-hidden="true">D</span><span class="text-xl font-black tracking-tight text-white">Dorado TV</span></div>
-        <h1 id="invite-title" class="text-2xl font-bold text-white">Crear contraseña</h1>
-        <p class="mt-2 text-sm text-slate-400">Completa la invitación para acceder.</p>
-        <form id="invite-form" class="mt-7 space-y-4"><div><label for="invite-password" class="mb-1.5 block text-sm font-medium text-slate-200">Contraseña</label><input id="invite-password" type="password" minlength="12" required autocomplete="new-password" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white focus:border-amber-400 focus:outline-none" /></div><button id="invite-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300">Activar cuenta</button></form>
-        <p id="invite-error" class="mt-4 min-h-5 text-sm text-red-300" role="alert"></p>
-      </section>
-    </main>`;
-  app.querySelector('#invite-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const button = app.querySelector('#invite-submit');
-    button.disabled = true;
-    try {
-      await acceptInvite(token, app.querySelector('#invite-password').value);
-      mountPlayer(await api('session'));
-    } catch (error) {
-      app.querySelector('#invite-error').textContent = error.status === 403 ? 'Esta cuenta no tiene acceso.' : 'No se pudo activar la cuenta. Revisa la invitación.';
-      button.disabled = false;
     }
   });
 }
@@ -260,7 +234,7 @@ function mountPlayer(session) {
     }
   }
 
-  $('#logout').addEventListener('click', async () => { stop(); await logout().catch(() => {}); location.reload(); });
+  $('#logout').addEventListener('click', async () => { stop(); await api('logout', { auth: true, method: 'POST' }).catch(() => {}); location.reload(); });
   $('#unlock-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const passwordInput = $('#playlist-password');
@@ -352,14 +326,9 @@ function mountPlayer(session) {
 showLogin();
 (async () => {
   try {
-    const callback = await handleAuthCallback();
-    if (callback?.type === 'invite' && callback.token) { showInvite(callback.token); return; }
-  } catch { /* A login form remains available. */ }
-  const user = await getUser();
-  if (!user) return;
-  try { mountPlayer(await api('session')); }
-  catch (error) {
-    if (error.status === 403) { await logout().catch(() => {}); showLogin('Esta cuenta no tiene acceso.'); }
-    else showLogin('No se pudo comprobar la sesión.');
+    await api('session', { auth: true });
+    mountPlayer(await api('session'));
+  } catch (error) {
+    if (error.status !== 401) showLogin('No se pudo comprobar la sesión.');
   }
 })();
