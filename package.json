@@ -7,9 +7,12 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test"
+    "test": "node --test",
+    "encrypt:playlist": "node scripts/encrypt-playlist.mjs"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "hls.js": "^1.6.16",
     "mpegts.js": "^1.7.3"
   },
