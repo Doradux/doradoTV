@@ -30,11 +30,23 @@ async function deriveKey(password, salt, usages) {
   );
 }
 
-export async function encryptPlaylist(plaintext, password) {
+export async function encryptPlaylist(plaintext, password, { forceFallback = false } = {}) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(password, salt, ['encrypt']);
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoder.encode(plaintext));
+  let encrypted;
+  if (!forceFallback && globalThis.crypto?.subtle) {
+    const key = await deriveKey(password, salt, ['encrypt']);
+    encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoder.encode(plaintext)));
+  } else {
+    if (!password) throw new Error('Introduce la clave.');
+    const [{ pbkdf2Async }, { sha256 }, { gcm }] = await Promise.all([
+      import('@noble/hashes/pbkdf2.js'),
+      import('@noble/hashes/sha2.js'),
+      import('@noble/ciphers/aes.js'),
+    ]);
+    const key = await pbkdf2Async(sha256, encoder.encode(password), salt, { c: ITERATIONS, dkLen: 32 });
+    encrypted = gcm(key, iv).encrypt(encoder.encode(plaintext));
+  }
   return {
     format: FORMAT,
     version: 1,
@@ -43,7 +55,7 @@ export async function encryptPlaylist(plaintext, password) {
     cipher: 'AES-256-GCM',
     salt: toBase64(salt),
     iv: toBase64(iv),
-    data: toBase64(new Uint8Array(encrypted)),
+    data: toBase64(encrypted),
   };
 }
 

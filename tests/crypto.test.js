@@ -22,3 +22,8 @@ test('fallback decrypts Web Crypto ciphertext on local network origins', async (
   assert.equal(await decryptPlaylist(document, 'una-clave-larga-de-prueba', { forceFallback: true }), playlist);
   await assert.rejects(decryptPlaylist(document, 'clave-incorrecta', { forceFallback: true }));
 });
+
+test('fallback encryption can be decrypted by Web Crypto', async () => {
+  const document = await encryptPlaylist(playlist, 'una-clave-larga-de-prueba', { forceFallback: true });
+  assert.equal(await decryptPlaylist(document, 'una-clave-larga-de-prueba'), playlist);
+});
