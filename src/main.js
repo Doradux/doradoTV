@@ -11,6 +11,7 @@ import { groupsFor, parsePlaylist } from './playlist.js';
 const app = document.querySelector('#app');
 const API = '/.netlify/functions/playlist';
 const AUTH_API = '/.netlify/functions/auth';
+const RELAY_API = '/.netlify/functions/relay';
 const CHUNK_SIZE = 512 * 1024;
 
 function iconSvg(icon, classes = 'h-5 w-5') {
@@ -27,7 +28,7 @@ function escapeHtml(value) {
 }
 
 async function api(action, options = {}) {
-  const response = await fetch(`${options.auth ? AUTH_API : API}?action=${encodeURIComponent(action)}${options.query || ''}`, {
+  const response = await fetch(`${options.auth ? AUTH_API : options.relay ? RELAY_API : API}?action=${encodeURIComponent(action)}${options.query || ''}`, {
     method: options.method || 'GET',
     body: options.body,
     headers: options.headers,
@@ -107,6 +108,7 @@ function mountPlayer(session) {
           </div>
         </div>
         <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5"><p class="text-xs font-semibold uppercase tracking-widest text-amber-400">En directo</p><h2 id="now-name" class="mt-1 truncate text-xl font-bold text-white">Ningún canal seleccionado</h2><p id="status" class="mt-2 text-sm text-slate-400" role="status" aria-live="polite"></p></div>
+        <section id="relay-panel" class="hidden rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5" aria-label="Conexiones compartidas"><div class="flex items-center justify-between gap-3"><h2 class="font-bold text-white">Conexiones compartidas</h2><span id="relay-count" class="text-xs text-slate-400"></span></div><div id="relay-connections" class="mt-3 space-y-2 text-sm text-slate-300"></div></section>
       </section>
       <aside class="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70" aria-label="Canales">
         <div class="border-b border-slate-800 p-4 sm:p-5"><div class="mb-4 flex items-center justify-between gap-2"><h2 class="text-lg font-bold text-white">Canales</h2><span id="count" class="text-xs text-slate-400">0 canales</span></div><label for="search" class="sr-only">Buscar canales</label><div class="relative text-slate-400"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">${iconSvg(Search, 'h-4 w-4')}</span><input id="search" type="search" placeholder="Buscar canal o categoría…" class="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /></div><div class="mt-3 flex gap-2"><label for="category" class="sr-only">Filtrar categoría</label><select id="category" class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-amber-400 focus:outline-none"><option value="">Todas las categorías</option></select><button id="favorites" type="button" class="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400" aria-pressed="false">${morphSvg(StarOff, 'favorites-icon', 'h-4 w-4')}<span>Favoritos</span></button></div></div>
@@ -132,6 +134,15 @@ function mountPlayer(session) {
   let onlyFavorites = false;
   let playbackToken = 0;
   let playlistKey = null;
+  let relayEnabled = false;
+  let relaySession = null;
+  const tabId = globalThis.crypto.randomUUID();
+  const relayApi = (action, options = {}) => api(action, { ...options, relay: true });
+  const relayReady = relayApi('config').then(({ enabled }) => {
+    relayEnabled = enabled;
+    $('#relay-panel').classList.toggle('hidden', !enabled);
+    if (enabled) refreshConnections();
+  }).catch(() => {});
   let savedFavorites = [];
   try { savedFavorites = JSON.parse(localStorage.getItem('dorado-tv:favorites') || '[]'); } catch { localStorage.removeItem('dorado-tv:favorites'); }
   const favorites = new Set(Array.isArray(savedFavorites) ? savedFavorites : []);
@@ -154,6 +165,11 @@ function mountPlayer(session) {
   function keyOf(channel) { return `${channel.group}\u0000${channel.name}`; }
   function stop() {
     playbackToken += 1;
+    if (relaySession) {
+      const sessionId = relaySession;
+      relaySession = null;
+      relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: sessionId, is_playing: false }), headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+    }
     video.pause();
     if (hls) { hls.destroy(); hls = null; }
     if (ts) { ts.pause(); ts.unload(); ts.detachMediaElement(); ts.destroy(); ts = null; }
@@ -161,6 +177,14 @@ function mountPlayer(session) {
     video.load();
     setLoading(false);
     setPlayIcon(false);
+  }
+  async function refreshConnections() {
+    if (!relayEnabled) return;
+    try {
+      const data = await relayApi('status');
+      $('#relay-count').textContent = `${data.active_count}/${data.max_connections} canales`;
+      $('#relay-connections').innerHTML = data.connections.length ? data.connections.map((connection) => `<div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2"><span class="min-w-0"><strong class="block truncate text-white">${escapeHtml(connection.channel_name)}</strong><span class="text-xs text-slate-400">${connection.status === 'starting' ? 'Conectando' : connection.status === 'external' ? 'Proveedor' : 'En directo'} · ${connection.program ? `${escapeHtml(connection.program)} · ` : ''}${connection.users.map((user) => escapeHtml(user.name)).join(', ') || 'Sin espectadores'}</span></span>${connection.emission_id ? `<button type="button" data-close-emission="${escapeHtml(connection.emission_id)}" class="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-600 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300">Cerrar canal</button>` : ''}</div>`).join('') : '<p class="text-slate-400">No hay emisiones activas.</p>';
+    } catch { $('#relay-count').textContent = 'Sin conexión'; }
   }
   function renderChannels() {
     const query = $('#search').value.trim().toLocaleLowerCase('es');
@@ -201,36 +225,58 @@ function mountPlayer(session) {
     renderChannels();
     setLoading(true);
     setStatus(`Conectando con ${channel.name}…`);
-    if (location.protocol === 'https:' && channel.url.startsWith('http:')) { setLoading(false); setStatus('Este canal necesita una señal HTTPS para reproducirse aquí.', true); return; }
     try {
-      const path = new URL(channel.url).pathname.toLowerCase();
+      await relayReady;
+      if (token !== playbackToken) return;
+      let source = channel.url;
+      if (relayEnabled) {
+        const started = await relayApi('start', { method: 'POST', body: JSON.stringify({ channel: { url: channel.url, name: channel.name }, tab: tabId }), headers: { 'Content-Type': 'application/json' } });
+        if (token !== playbackToken) {
+          relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: started.session_id, is_playing: false }), headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+          return;
+        }
+        relaySession = started.session_id;
+        source = started.playlist_url;
+        refreshConnections();
+        let ready = false;
+        for (let attempt = 0; attempt < 36; attempt += 1) {
+          if (token !== playbackToken) return;
+          const state = await relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: started.session_id, is_playing: true }), headers: { 'Content-Type': 'application/json' } });
+          if (state.status === 'running') { ready = true; break; }
+          if (state.kicked || state.status === 'failed' || state.status === 'closed') throw new Error('El proveedor no está emitiendo este canal.');
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        if (!ready) throw new Error('La señal no estuvo disponible a tiempo.');
+      } else if (location.protocol === 'https:' && source.startsWith('http:')) throw new Error('Este canal necesita una señal HTTPS para reproducirse aquí.');
+      const path = new URL(source).pathname.toLowerCase();
       if (path.endsWith('.m3u8')) {
-        if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = channel.url;
+        if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = source;
         else {
           const { default: Hls } = await import('hls.js');
           if (token !== playbackToken) return;
           if (!Hls.isSupported()) throw new Error('HLS no disponible');
           hls = new Hls({ enableWorker: true, lowLatencyMode: true });
           hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && token === playbackToken) { setLoading(false); setStatus('No se pudo reproducir el canal. Comprueba la señal.', true); } });
-          hls.loadSource(channel.url);
+          hls.loadSource(source);
           hls.attachMedia(video);
         }
       } else if (path.endsWith('.ts')) {
         const { default: mpegts } = await import('mpegts.js');
         if (token !== playbackToken) return;
         if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('MPEG-TS no disponible');
-        ts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: channel.url });
+        ts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: source });
         ts.attachMediaElement(video);
         ts.load();
-      } else video.src = channel.url;
+      } else video.src = source;
       await video.play();
       if (token !== playbackToken) return;
       setLoading(false);
       setStatus(`Reproduciendo ${channel.name}.`);
     } catch (error) {
       if (token !== playbackToken) return;
+      if (relaySession) stop();
       setLoading(false);
-      setStatus(error?.name === 'NotAllowedError' ? 'Pulsa Reproducir para iniciar el canal.' : 'No se pudo reproducir este canal. Comprueba la señal.', error?.name !== 'NotAllowedError');
+      setStatus(error?.name === 'NotAllowedError' ? 'Pulsa Reproducir para iniciar el canal.' : error.message || 'No se pudo reproducir este canal. Comprueba la señal.', error?.name !== 'NotAllowedError');
     }
   }
 
@@ -268,7 +314,16 @@ function mountPlayer(session) {
   $('#category').addEventListener('change', () => { visible = 80; renderChannels(); });
   $('#favorites').addEventListener('click', () => { onlyFavorites = !onlyFavorites; $('#favorites').setAttribute('aria-pressed', String(onlyFavorites)); favoritesMorph.morphTo(onlyFavorites ? Star : StarOff, 'snappy'); visible = 80; renderChannels(); });
   $('#more').addEventListener('click', () => { visible += 80; renderChannels(); });
-  $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (video.paused && video.currentSrc) video.play().catch(() => play(active)); else if (!video.paused) video.pause(); else play(active); });
+  $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused) { stop(); setStatus('Emisión pausada.'); } else if (relayEnabled) play(active); else if (video.currentSrc) video.play().catch(() => play(active)); else play(active); });
+  $('#relay-connections').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-close-emission]');
+    if (!button) return;
+    button.disabled = true;
+    try {
+      await relayApi('close', { method: 'POST', body: JSON.stringify({ emission_id: button.dataset.closeEmission }), headers: { 'Content-Type': 'application/json' } });
+      await refreshConnections();
+    } catch (error) { setStatus(error.message, true); button.disabled = false; }
+  });
   $('#prev').addEventListener('click', () => { if (channels.length) play(channels[(channels.indexOf(active) - 1 + channels.length) % channels.length]); });
   $('#next').addEventListener('click', () => { if (channels.length) play(channels[(channels.indexOf(active) + 1) % channels.length]); });
   $('#volume').addEventListener('input', (event) => { video.volume = Number(event.target.value); });
@@ -281,6 +336,17 @@ function mountPlayer(session) {
   video.addEventListener('playing', () => setLoading(false));
   video.addEventListener('error', () => { if (active) { setLoading(false); setStatus('El navegador no pudo abrir la emisión.', true); } });
   window.addEventListener('pagehide', stop, { once: true });
+  const relayInterval = setInterval(async () => {
+    if (relaySession) {
+      const sessionId = relaySession;
+      try {
+        const state = await relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: sessionId, is_playing: true }), headers: { 'Content-Type': 'application/json' } });
+        if (state.kicked && relaySession === sessionId) { stop(); setStatus(state.message || 'La emisión ha terminado. Puedes volver a abrir el canal.', true); }
+      } catch { /* A brief network failure does not end playback. */ }
+    }
+    refreshConnections();
+  }, 5000);
+  window.addEventListener('pagehide', () => clearInterval(relayInterval), { once: true });
 
   const modal = $('#upload-modal');
   const closeUpload = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); $('#upload-form').reset(); $('#upload-status').textContent = ''; $('#upload-open').focus(); };

@@ -30,10 +30,10 @@ npm run dev -- --port 5199 --strictPort
 
 El plugin de Netlify para Vite sirve las funciones y una base de datos local. Aplica la migración local con `npx netlify database migrations apply` mientras el servidor está activo. Después, obtén la conexión local con `npx netlify database connect --json` y crea el administrador con el script. La base de datos y las listas locales están separadas de producción.
 
-## Reproducción
+## Reproducción compartida
 
-Los canales HTTP pueden quedar bloqueados en HTTPS; HLS y MPEG-TS dependen del navegador y de las cabeceras CORS del proveedor. Las emisiones que requieran conversión o relay continuo necesitan un servicio externo.
+El proyecto incluye un [relay persistente](relay/README.md) para compartir una sola conexión al proveedor entre varios espectadores del mismo canal. Convierte MPEG-TS en HLS con FFmpeg, limita el número de canales simultáneos, muestra los espectadores y permite cerrar una emisión desde la app. Se ejecuta en un servidor propio; Netlify solo autentica las órdenes y sirve la interfaz. Al activarlo, la URL del canal seleccionado se envía al relay, pero la lista M3U completa y su clave siguen sin enviarse.
+
+Configura `DORADO_RELAY_URL` y `DORADO_RELAY_SECRET` en Netlify después de poner en marcha el servicio. Sin esas variables, la app sigue conectándose directamente al origen: los canales HTTP pueden quedar bloqueados en HTTPS y HLS/MPEG-TS dependen de CORS y del navegador.
 
 Utiliza únicamente listas y emisiones para las que tengas autorización.
-
-Cada navegador se conecta directamente al origen del canal. La app no comparte una única conexión entre varios espectadores. Esa función exige un relay persistente fuera de Netlify.

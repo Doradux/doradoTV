@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test",
+    "relay": "node relay/server.js",
     "dev:netlify": "netlify dev --port 5200",
     "admin:create": "node scripts/create-admin.js"
   },
