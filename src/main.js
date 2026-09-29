@@ -1,12 +1,15 @@
 import './main.css';
 import { createMorph, canonicalD } from 'morphicons/dom';
 import {
-  Play, Pause, SkipBack, SkipForward, Volume2, PictureInPicture2,
+  Play, Pause, Volume2, VolumeX, PictureInPicture2, PictureInPicture,
+  RectangleHorizontal, PanelRightClose, ChevronDown, Radio,
   Maximize, Minimize, Star, StarOff, TvMinimal, Upload, Check,
   LogOut, LockKeyhole, X, FileUp, Search,
+  Users, UserPlus, Trash2, Pencil, Shield,
 } from 'lucide';
 import { encryptPlaylist, decryptPlaylist } from './crypto.js';
 import { groupsFor, parsePlaylist } from './playlist.js';
+import { createAmbientLight } from './ambient.js';
 
 const app = document.querySelector('#app');
 const API = '/.netlify/functions/playlist';
@@ -46,9 +49,9 @@ async function api(action, options = {}) {
 
 function showLogin(message = '') {
   app.innerHTML = `
-    <main class="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8 text-slate-100">
+    <main class="login-screen flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8 text-slate-100">
       <section class="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-7 shadow-2xl shadow-black/30 sm:p-9" aria-labelledby="login-title">
-        <div class="mb-7 flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-2xl font-black text-slate-950" aria-hidden="true">D</span><span class="text-xl font-black tracking-tight text-white">Dorado TV</span></div>
+        <div class="mb-7 flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-2xl font-black text-slate-950" aria-hidden="true">${iconSvg(TvMinimal, 'h-6 w-6')}</span><span class="text-xl font-black tracking-tight text-white">Dorado TV</span></div>
         <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-400">${iconSvg(LockKeyhole, 'h-6 w-6')}</div>
         <h1 id="login-title" class="text-2xl font-bold text-white">Iniciar sesión</h1>
         <p class="mt-2 text-sm text-slate-400">Accede a tus canales con tu cuenta.</p>
@@ -69,8 +72,9 @@ function showLogin(message = '') {
     error.textContent = '';
     try {
       await api('login', { auth: true, method: 'POST', body: JSON.stringify({ username: app.querySelector('#username').value.trim(), password: app.querySelector('#password').value }), headers: { 'Content-Type': 'application/json' } });
-      const session = await api('session');
-      mountPlayer(session);
+      const authSession = await api('session', { auth: true });
+      const playlistSession = await api('session');
+      mountPlayer({ ...playlistSession, username: authSession.username });
     } catch (cause) {
       error.textContent = cause.message || 'No se pudo iniciar sesión.';
       button.disabled = false;
@@ -81,46 +85,114 @@ function showLogin(message = '') {
 
 function mountPlayer(session) {
   app.innerHTML = `
-  <div class="mx-auto flex min-h-screen w-full flex-col px-4 pb-8 pt-5 text-slate-100 sm:px-6 lg:px-8">
-    <header class="mb-6 flex items-center justify-between gap-4 border-b border-slate-800 pb-5">
-      <div class="flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-2xl font-black text-slate-950 shadow-lg shadow-amber-500/20" aria-hidden="true">D</span><h1 class="text-2xl font-black tracking-tight text-white">Dorado TV</h1></div>
-      <button id="logout" type="button" title="Cerrar sesión" aria-label="Cerrar sesión" class="rounded-xl border border-slate-700 p-2.5 text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(LogOut)}</button>
+  <div class="app-shell">
+    <header class="app-header">
+      <a href="#" class="brand">
+        <div>
+          <span>Dorado<span class="brand-tv">TV</span></span>
+        </div>
+      </a>
+      <div class="header-actions">
+        <button id="logout" type="button" title="Cerrar sesión" aria-label="Cerrar sesión" class="rounded-xl border border-slate-700 p-2.5 text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(LogOut)}</button>
+      </div>
     </header>
-    <main class="flex flex-1 flex-col gap-5">
-      <section class="min-w-0 space-y-5" aria-label="Reproductor">
-        <div class="overflow-hidden rounded-3xl border border-slate-800 bg-black shadow-2xl shadow-black/30">
-          <div class="relative aspect-video bg-black">
-            <video id="video" class="h-full w-full object-contain" playsinline preload="none" aria-label="Vídeo del canal seleccionado"></video>
-            <div id="empty" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950 px-6 text-center">
-              <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-400/25 bg-amber-400/10 text-amber-300">${iconSvg(TvMinimal, 'h-8 w-8')}</div>
-              <h2 class="text-lg font-bold text-white">Selecciona un canal</h2>
-              <p class="max-w-md text-sm text-slate-400">Elige qué quieres ver.</p>
+    <main id="watch-layout" class="watch-layout">
+      <section class="player-column" aria-label="Reproductor">
+        <div id="player-shell" class="player-shell">
+          <div id="video-stage" class="video-stage">
+            <canvas id="ambient" width="96" height="54" aria-hidden="true"></canvas>
+            <video id="video" playsinline preload="none" aria-label="Vídeo del canal seleccionado"></video>
+            <div id="empty" class="empty-player">
+              <div class="empty-icon">${iconSvg(TvMinimal, 'h-9 w-9')}</div>
+              <span class="eyebrow">TU MOMENTO, TU CANAL</span>
+              <h2>¿Qué te apetece ver?</h2>
+              <p>Elige un canal y ponte cómodo.</p>
             </div>
-            <div id="loading" class="absolute inset-0 hidden items-center justify-center bg-black/70" role="status"><span class="rounded-full border border-slate-600 bg-slate-900/90 px-4 py-2 text-sm text-white">Cargando emisión…</span></div>
+            <div id="loading" class="absolute inset-0 z-10 hidden items-center justify-center bg-black/60" role="status"><span class="loading-label"><span class="loading-dot"></span>Conectando con la emisión…</span></div>
           </div>
-          <div class="flex flex-wrap items-center gap-2 border-t border-slate-800 bg-slate-900/80 p-3 sm:p-4">
-            <button id="prev" type="button" title="Canal anterior" aria-label="Canal anterior" class="rounded-xl border border-slate-700 p-2.5 text-slate-200 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(SkipBack)}</button>
-            <button id="play" type="button" title="Reproducir" aria-label="Reproducir" class="rounded-xl bg-amber-400 p-2.5 text-slate-950 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">${morphSvg(Play, 'play-icon')}</button>
-            <button id="next" type="button" title="Canal siguiente" aria-label="Canal siguiente" class="rounded-xl border border-slate-700 p-2.5 text-slate-200 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(SkipForward)}</button>
-            <label class="ml-auto flex items-center gap-2 text-slate-300">${iconSvg(Volume2, 'h-4 w-4')}<span class="sr-only">Volumen</span><input id="volume" class="w-20 accent-amber-400 sm:w-28" type="range" min="0" max="1" step="0.05" value="0.8" aria-label="Volumen" /></label>
-            <button id="pip" type="button" title="Ventana flotante" aria-label="Ventana flotante" class="rounded-xl border border-slate-700 p-2.5 text-slate-200 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(PictureInPicture2)}</button>
-            <button id="fullscreen" type="button" title="Pantalla completa" aria-label="Pantalla completa" class="rounded-xl border border-slate-700 p-2.5 text-slate-200 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${morphSvg(Maximize, 'fullscreen-icon')}</button>
+          <div class="player-controls">
+            <button id="play" type="button" title="Reproducir" aria-label="Reproducir" class="icon-button play-button">${morphSvg(Play, 'play-icon')}</button>
+            <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.05" value="0.8" aria-label="Volumen" /></div>
+            <span id="playback-badge" class="playback-badge">EN DIRECTO</span>
+            <div class="view-controls">
+              <button id="pip" type="button" title="Ventana flotante" aria-label="Ventana flotante" aria-pressed="false" class="icon-button">${morphSvg(PictureInPicture2, 'pip-icon')}</button>
+              <button id="theater" type="button" title="Modo cine" aria-label="Modo cine" aria-pressed="false" aria-controls="watch-layout" class="icon-button">${morphSvg(RectangleHorizontal, 'theater-icon')}</button>
+              <button id="fullscreen" type="button" title="Pantalla completa" aria-label="Pantalla completa" aria-pressed="false" class="icon-button">${morphSvg(Maximize, 'fullscreen-icon')}</button>
+            </div>
           </div>
         </div>
-        <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5"><p class="text-xs font-semibold uppercase tracking-widest text-amber-400">En directo</p><h2 id="now-name" class="mt-1 truncate text-xl font-bold text-white">Ningún canal seleccionado</h2><p id="status" class="mt-2 text-sm text-slate-400" role="status" aria-live="polite"></p></div>
+        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">AHORA EN TU PANTALLA</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p></div></div>
         <section id="relay-panel" class="hidden rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5" aria-label="Conexiones compartidas"><div class="flex items-center justify-between gap-3"><h2 class="font-bold text-white">Conexiones compartidas</h2><span id="relay-count" class="text-xs text-slate-400"></span></div><div id="relay-connections" class="mt-3 space-y-2 text-sm text-slate-300"></div></section>
       </section>
-      <aside class="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70" aria-label="Canales">
-        <div class="border-b border-slate-800 p-4 sm:p-5"><div class="mb-4 flex items-center justify-between gap-2"><h2 class="text-lg font-bold text-white">Canales</h2><span id="count" class="text-xs text-slate-400">0 canales</span></div><label for="search" class="sr-only">Buscar canales</label><div class="relative text-slate-400"><span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">${iconSvg(Search, 'h-4 w-4')}</span><input id="search" type="search" placeholder="Buscar canal o categoría…" class="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" /></div><div class="mt-3 flex gap-2"><label for="category" class="sr-only">Filtrar categoría</label><select id="category" class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-amber-400 focus:outline-none"><option value="">Todas las categorías</option></select><button id="favorites" type="button" class="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400" aria-pressed="false">${morphSvg(StarOff, 'favorites-icon', 'h-4 w-4')}<span>Favoritos</span></button></div></div>
-        <div id="channel-list" class="grid min-h-64 grid-cols-1 content-start gap-2 p-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" role="list"><p class="p-5 text-center text-sm text-slate-400">Los canales aparecerán aquí.</p></div><div id="more-wrap" class="hidden border-t border-slate-800 p-3"><button id="more" type="button" class="w-full rounded-xl border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">Mostrar más canales</button></div>
+      <aside class="channel-panel" aria-label="Canales">
+        <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">EXPLORA TU LISTA</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
+          <label for="search" class="sr-only">Buscar canales</label><div class="search-field">${iconSvg(Search, 'h-4 w-4')}<input id="search" type="search" placeholder="Buscar canal o categoría…" /></div>
+          <div class="filter-row"><div class="category-field"><label for="category" class="sr-only">Filtrar categoría</label><select id="category"><option value="">Todas las categorías</option></select>${iconSvg(ChevronDown, 'h-4 w-4')}</div><button id="favorites" type="button" class="favorites-filter" title="Mostrar favoritos" aria-label="Mostrar favoritos" aria-pressed="false">${morphSvg(StarOff, 'favorites-icon', 'h-4 w-4')}<span>Favoritos</span></button></div>
+        </div>
+        <div id="channel-list" class="channel-list" role="list"><p class="list-empty">Los canales aparecerán aquí.</p></div><div id="more-wrap" class="hidden border-t border-slate-800 p-3"><button id="more" type="button" class="more-button">Mostrar más canales</button></div>
       </aside>
     </main>
-    <div class="group fixed bottom-5 left-5 z-40"><button id="upload-open" type="button" aria-label="Subir lista de canales" aria-haspopup="dialog" title="Subir lista de canales" class="flex h-12 w-12 items-center justify-center rounded-full border border-amber-300 bg-amber-400 text-slate-950 shadow-xl shadow-black/40 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">${morphSvg(Upload, 'upload-icon')}</button><span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Subir lista de canales</span></div>
+    <div class="fixed bottom-5 left-5 z-40 flex items-center gap-3">
+      <div class="group relative">
+        <button id="upload-open" type="button" aria-label="Subir lista de canales" aria-haspopup="dialog" title="Subir lista de canales" class="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border border-amber-300 bg-amber-400 text-slate-950 shadow-xl shadow-black/40 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"><span class="pointer-events-none flex items-center justify-center">${morphSvg(Upload, 'upload-icon')}</span></button>
+        <span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Subir lista de canales</span>
+      </div>
+      <div class="group relative">
+        <button id="users-open" type="button" aria-label="Gestionar accesos" aria-haspopup="dialog" title="Gestionar accesos" class="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-amber-400 shadow-xl shadow-black/40 transition hover:border-amber-400 hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"><span class="pointer-events-none flex items-center justify-center">${iconSvg(Users, 'h-5 w-5')}</span></button>
+        <span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Gestionar accesos</span>
+      </div>
+    </div>
     <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Selecciona el archivo. Se guardará cifrado y quedará disponible al iniciar sesión.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u,.m3u8,text/plain" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
+    <div id="users-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="users-title">
+      <div class="flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7">
+        <div class="flex items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div class="flex items-center gap-3 text-amber-400">
+            ${iconSvg(Users, 'h-6 w-6')}
+            <h2 id="users-title" class="text-xl font-bold text-white">Gestionar accesos</h2>
+          </div>
+          <button id="users-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button>
+        </div>
+        <div class="my-4 flex-1 space-y-4 overflow-y-auto pr-1">
+          <div>
+            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Accesos configurados</h3>
+            <div id="users-list" class="space-y-2">
+              <p class="py-3 text-center text-sm text-slate-400">Cargando accesos…</p>
+            </div>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+            <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+              <span id="user-form-icon">${iconSvg(UserPlus, 'h-4 w-4 text-amber-400')}</span>
+              <span id="user-form-heading">Crear nuevo acceso</span>
+            </h3>
+            <form id="user-form" class="space-y-3">
+              <input type="hidden" id="user-edit-orig" value="" />
+              <div>
+                <label for="user-username" class="mb-1 block text-xs font-medium text-slate-300">Usuario</label>
+                <input id="user-username" type="text" required autocomplete="off" placeholder="Nombre de usuario" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" />
+              </div>
+              <div>
+                <label for="user-password" id="user-password-label" class="mb-1 block text-xs font-medium text-slate-300">Contraseña</label>
+                <input id="user-password" type="password" required autocomplete="new-password" placeholder="Contraseña (mínimo 4 caracteres)" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" />
+              </div>
+              <p id="users-status" class="min-h-5 text-xs text-slate-400" role="status" aria-live="polite"></p>
+              <div class="flex gap-2">
+                <button id="user-submit" type="submit" class="flex-1 rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Crear acceso</button>
+                <button id="user-cancel-edit" type="button" class="hidden rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:border-slate-500 hover:text-white">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>`;
 
   const $ = (selector) => app.querySelector(selector);
   const video = $('#video');
+  const ambient = createAmbientLight(video, $('#ambient'), $('#video-stage'));
+  const channelMorphs = new Map();
+  const theaterMorph = createMorph($('#theater-icon'), RectangleHorizontal, { reducedMotion: 'user' });
+  const volumeMorph = createMorph($('#volume-icon'), Volume2, { reducedMotion: 'user' });
+  const pipMorph = createMorph($('#pip-icon'), PictureInPicture2, { reducedMotion: 'user' });
   const playMorph = createMorph($('#play-icon'), Play, { reducedMotion: 'user' });
   const fullscreenMorph = createMorph($('#fullscreen-icon'), Maximize, { reducedMotion: 'user' });
   const favoritesMorph = createMorph($('#favorites-icon'), StarOff, { reducedMotion: 'user' });
@@ -136,7 +208,7 @@ function mountPlayer(session) {
   let playlistKey = null;
   let relayEnabled = false;
   let relaySession = null;
-  const tabId = globalThis.crypto.randomUUID();
+  const tabId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const relayApi = (action, options = {}) => api(action, { ...options, relay: true });
   const relayReady = relayApi('config').then(({ enabled }) => {
     relayEnabled = enabled;
@@ -159,6 +231,7 @@ function mountPlayer(session) {
   }
   function setPlayIcon(isPlaying) {
     playMorph.morphTo(isPlaying ? Pause : Play, 'snappy');
+    $('#playback-badge').classList.toggle('is-playing', isPlaying);
     $('#play').setAttribute('aria-label', isPlaying ? 'Pausar' : 'Reproducir');
     $('#play').title = isPlaying ? 'Pausar' : 'Reproducir';
   }
@@ -170,6 +243,7 @@ function mountPlayer(session) {
       relaySession = null;
       relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: sessionId, is_playing: false }), headers: { 'Content-Type': 'application/json' } }).catch(() => {});
     }
+    ambient.reset();
     video.pause();
     if (hls) { hls.destroy(); hls = null; }
     if (ts) { ts.pause(); ts.unload(); ts.detachMediaElement(); ts.destroy(); ts = null; }
@@ -178,12 +252,46 @@ function mountPlayer(session) {
     setLoading(false);
     setPlayIcon(false);
   }
+  const AVATAR_BG = [
+    'bg-amber-400 text-slate-950',
+    'bg-sky-400 text-slate-950',
+    'bg-emerald-400 text-slate-950',
+    'bg-violet-400 text-white',
+    'bg-rose-400 text-white',
+    'bg-indigo-400 text-white',
+  ];
+  function avatarColor(name = '') {
+    let hash = 0;
+    for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+    return AVATAR_BG[hash % AVATAR_BG.length];
+  }
+  function renderUserAvatars(users = []) {
+    if (!users.length) return '';
+    const list = users.slice(0, 3);
+    const remaining = users.length - list.length;
+    const styles = [
+      'z-30 opacity-100 scale-100',
+      'z-20 opacity-[0.85] scale-[0.90]',
+      'z-10 opacity-[0.70] scale-[0.80]',
+    ];
+    const items = list.map((user, idx) => {
+      const initial = escapeHtml((user.name || '?')[0].toUpperCase());
+      const name = escapeHtml(user.name || 'Usuario');
+      const posStyle = styles[idx] || styles[2];
+      const color = avatarColor(user.name || '');
+      return `<span class="group/avatar relative flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-900 font-bold text-xs uppercase shadow-sm transition-all duration-200 ${posStyle} group-hover/stack:opacity-100 group-hover/stack:scale-100 hover:!opacity-100 hover:!scale-105 hover:!z-40 ${color}"><span class="pointer-events-none select-none">${initial}</span><span role="tooltip" class="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] font-medium text-white shadow-xl opacity-0 transition-opacity duration-150 group-hover/avatar:opacity-100 z-50">${name}</span></span>`;
+    });
+    if (remaining > 0) {
+      items.push(`<span class="group/avatar relative flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-[10px] font-bold text-slate-300 shadow-sm transition-all duration-200 z-0 opacity-[0.60] scale-[0.75] group-hover/stack:opacity-100 group-hover/stack:scale-100 hover:!opacity-100 hover:!scale-105 hover:!z-40"><span class="pointer-events-none select-none">+${remaining}</span><span role="tooltip" class="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] font-medium text-white shadow-xl opacity-0 transition-opacity duration-150 group-hover/avatar:opacity-100 z-50">+${remaining} más</span></span>`);
+    }
+    return `<div class="group/stack flex items-center -space-x-2 py-0.5">${items.join('')}</div>`;
+  }
   async function refreshConnections() {
     if (!relayEnabled) return;
     try {
       const data = await relayApi('status');
       $('#relay-count').textContent = `${data.active_count}/${data.max_connections} canales`;
-      $('#relay-connections').innerHTML = data.connections.length ? data.connections.map((connection) => `<div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2"><span class="min-w-0"><strong class="block truncate text-white">${escapeHtml(connection.channel_name)}</strong><span class="text-xs text-slate-400">${connection.status === 'starting' ? 'Conectando' : connection.status === 'external' ? 'Proveedor' : 'En directo'} · ${connection.program ? `${escapeHtml(connection.program)} · ` : ''}${connection.users.map((user) => escapeHtml(user.name)).join(', ') || 'Sin espectadores'}</span></span>${connection.emission_id ? `<button type="button" data-close-emission="${escapeHtml(connection.emission_id)}" class="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-600 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300">Cerrar canal</button>` : ''}</div>`).join('') : '<p class="text-slate-400">No hay emisiones activas.</p>';
+      $('#relay-connections').innerHTML = data.connections.length ? data.connections.map((connection) => `<div class="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-3.5 py-2.5"><div class="flex min-w-0 items-center gap-2 truncate"><strong class="truncate text-sm font-semibold text-white">${escapeHtml(connection.channel_name)}</strong>${connection.program ? `<span class="truncate text-xs text-slate-400">· ${escapeHtml(connection.program)}</span>` : ''}</div><div class="flex shrink-0 items-center gap-3">${renderUserAvatars(connection.users)}${connection.emission_id ? `<button type="button" data-close-emission="${escapeHtml(connection.emission_id)}" class="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-600 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300">Cerrar canal</button>` : ''}</div></div>`).join('') : '<p class="text-slate-400">No hay emisiones activas.</p>';
     } catch { $('#relay-count').textContent = 'Sin conexión'; }
   }
   function renderChannels() {
@@ -192,11 +300,14 @@ function mountPlayer(session) {
     filtered = channels.filter((channel) => (!category || channel.group === category) && (!onlyFavorites || favorites.has(keyOf(channel))) && (!query || `${channel.name} ${channel.group}`.toLocaleLowerCase('es').includes(query)));
     $('#count').textContent = `${filtered.length.toLocaleString('es')} canales`;
     const shown = filtered.slice(0, visible);
+    channelMorphs.forEach((morph) => morph.destroy());
+    channelMorphs.clear();
     $('#channel-list').innerHTML = shown.length ? shown.map((channel) => {
       const selected = channel === active;
       const favorite = favorites.has(keyOf(channel));
-      return `<div role="listitem" class="flex items-center gap-2 rounded-xl border ${selected ? 'border-amber-400/60 bg-amber-400/10' : 'border-transparent hover:bg-slate-800'} p-2 transition"><button type="button" data-channel="${channel.id}" class="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${channel.logo ? `<img src="${escapeHtml(channel.logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" class="h-10 w-10 shrink-0 rounded-lg bg-slate-800 object-contain p-1" />` : `<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-slate-500" aria-hidden="true">${iconSvg(TvMinimal, 'h-5 w-5')}</span>`}<span class="min-w-0"><span class="block truncate text-sm font-semibold text-white">${escapeHtml(channel.name)}</span><span class="block truncate text-xs text-slate-400">${escapeHtml(channel.group)}</span></span></button><button type="button" data-favorite="${channel.id}" title="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}" aria-label="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}" aria-pressed="${favorite}" class="rounded-lg p-2 ${favorite ? 'text-amber-400' : 'text-slate-500 hover:text-amber-400'} focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(favorite ? Star : StarOff, 'h-5 w-5')}</button></div>`;
-    }).join('') : '<p class="p-5 text-center text-sm text-slate-400">No hay canales para este filtro.</p>';
+      return `<div role="listitem" class="channel-row ${selected ? 'is-selected' : ''}"><button type="button" data-channel="${channel.id}" aria-current="${selected ? 'true' : 'false'}" class="channel-select">${channel.logo ? `<img src="${escapeHtml(channel.logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" class="channel-logo" />` : `<span class="channel-logo" aria-hidden="true">${iconSvg(TvMinimal)}</span>`}<span class="channel-copy"><span class="channel-name">${escapeHtml(channel.name)}</span><span class="channel-group">${escapeHtml(channel.group)}</span></span>${selected ? `<span class="selected-indicator" aria-hidden="true">${iconSvg(Radio, 'h-4 w-4')}</span>` : ''}</button><button type="button" data-favorite="${channel.id}" title="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}" aria-label="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}: ${escapeHtml(channel.name)}" aria-pressed="${favorite}" class="channel-favorite">${morphSvg(favorite ? Star : StarOff, `favorite-${channel.id}`, 'h-4 w-4')}</button></div>`;
+    }).join('') : `<div class="list-empty">${iconSvg(Search, 'h-6 w-6')}<p>${channels.length ? 'No hay canales para este filtro.' : 'Tu lista empieza aquí.'}</p><span>${channels.length ? 'Prueba con otro nombre o categoría.' : 'Sube una lista para empezar a ver tus canales.'}</span></div>`;
+    shown.forEach((channel) => channelMorphs.set(channel.id, createMorph($(`#favorite-${channel.id}`), favorites.has(keyOf(channel)) ? Star : StarOff, { reducedMotion: 'user' })));
     $('#more-wrap').classList.toggle('hidden', filtered.length <= visible);
   }
   function setPlaylist(next) {
@@ -307,7 +418,12 @@ function mountPlayer(session) {
       const key = keyOf(channel);
       if (favorites.has(key)) favorites.delete(key); else favorites.add(key);
       localStorage.setItem('dorado-tv:favorites', JSON.stringify([...favorites]));
-      renderChannels();
+      const favorite = favorites.has(key);
+      favoriteButton.setAttribute('aria-pressed', String(favorite));
+      favoriteButton.title = favorite ? 'Quitar de favoritos' : 'Añadir a favoritos';
+      favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${channel.name}`);
+      channelMorphs.get(channel.id)?.morphTo(favorite ? Star : StarOff, 'snappy');
+      if (onlyFavorites) setTimeout(renderChannels, 250);
     } else play(channel);
   });
   $('#search').addEventListener('input', () => { visible = 80; renderChannels(); });
@@ -324,18 +440,59 @@ function mountPlayer(session) {
       await refreshConnections();
     } catch (error) { setStatus(error.message, true); button.disabled = false; }
   });
-  $('#prev').addEventListener('click', () => { if (channels.length) play(channels[(channels.indexOf(active) - 1 + channels.length) % channels.length]); });
-  $('#next').addEventListener('click', () => { if (channels.length) play(channels[(channels.indexOf(active) + 1) % channels.length]); });
-  $('#volume').addEventListener('input', (event) => { video.volume = Number(event.target.value); });
-  $('#pip').addEventListener('click', async () => { if (!document.pictureInPictureEnabled || !video.currentSrc) { setStatus('La ventana flotante no está disponible.'); return; } try { await (document.pictureInPictureElement ? document.exitPictureInPicture() : video.requestPictureInPicture()); } catch { setStatus('No se pudo abrir la ventana flotante.', true); } });
-  $('#fullscreen').addEventListener('click', async () => { try { await (document.fullscreenElement ? document.exitFullscreen() : video.requestFullscreen()); } catch { setStatus('No se pudo activar la pantalla completa.', true); } });
-  document.addEventListener('fullscreenchange', () => fullscreenMorph.morphTo(document.fullscreenElement ? Minimize : Maximize, 'snappy'));
+  $('#theater').addEventListener('click', () => {
+    const enabled = $('#watch-layout').classList.toggle('is-theater');
+    $('#theater').setAttribute('aria-pressed', String(enabled));
+    $('#theater').title = enabled ? 'Vista normal' : 'Modo cine';
+    $('#theater').setAttribute('aria-label', $('#theater').title);
+    theaterMorph.morphTo(enabled ? PanelRightClose : RectangleHorizontal, 'snappy');
+  });
+  video.volume = Number($('#volume').value);
+  const updateVolume = () => {
+    const muted = video.muted || video.volume === 0;
+    volumeMorph.morphTo(muted ? VolumeX : Volume2, 'snappy');
+    $('#mute').setAttribute('aria-pressed', String(muted));
+    $('#mute').title = muted ? 'Activar sonido' : 'Silenciar';
+    $('#mute').setAttribute('aria-label', $('#mute').title);
+    $('#volume').value = video.muted ? 0 : video.volume;
+    $('#volume').style.setProperty('--volume', `${Number($('#volume').value) * 100}%`);
+  };
+  $('#mute').addEventListener('click', () => { if (video.volume === 0) { video.volume = 0.8; video.muted = false; } else video.muted = !video.muted; });
+  $('#volume').addEventListener('input', (event) => { video.volume = Number(event.target.value); video.muted = false; });
+  video.addEventListener('volumechange', updateVolume);
+  updateVolume();
+  $('#pip').disabled = !document.pictureInPictureEnabled;
+  $('#pip').addEventListener('click', async () => { if (!video.currentSrc) { setStatus('Selecciona un canal para abrir la ventana flotante.'); return; } try { await (document.pictureInPictureElement ? document.exitPictureInPicture() : video.requestPictureInPicture()); } catch { setStatus('No se pudo abrir la ventana flotante.', true); } });
+  const updatePip = () => {
+    const enabled = document.pictureInPictureElement === video;
+    pipMorph.morphTo(enabled ? PictureInPicture : PictureInPicture2, 'snappy');
+    $('#pip').setAttribute('aria-pressed', String(enabled));
+    $('#pip').title = enabled ? 'Cerrar ventana flotante' : 'Ventana flotante';
+    $('#pip').setAttribute('aria-label', $('#pip').title);
+  };
+  video.addEventListener('enterpictureinpicture', updatePip);
+  video.addEventListener('leavepictureinpicture', updatePip);
+  $('#fullscreen').addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if ($('#player-shell').requestFullscreen) await $('#player-shell').requestFullscreen();
+      else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      else setStatus('La pantalla completa no está disponible.');
+    } catch { setStatus('No se pudo activar la pantalla completa.', true); }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    const enabled = document.fullscreenElement === $('#player-shell');
+    fullscreenMorph.morphTo(enabled ? Minimize : Maximize, 'snappy');
+    $('#fullscreen').setAttribute('aria-pressed', String(enabled));
+    $('#fullscreen').title = enabled ? 'Salir de pantalla completa' : 'Pantalla completa';
+    $('#fullscreen').setAttribute('aria-label', $('#fullscreen').title);
+  });
   video.addEventListener('play', () => setPlayIcon(true));
   video.addEventListener('pause', () => setPlayIcon(false));
   video.addEventListener('waiting', () => setLoading(true));
   video.addEventListener('playing', () => setLoading(false));
   video.addEventListener('error', () => { if (active) { setLoading(false); setStatus('El navegador no pudo abrir la emisión.', true); } });
-  window.addEventListener('pagehide', stop, { once: true });
+  window.addEventListener('pagehide', () => { stop(); ambient.destroy(); }, { once: true });
   const relayInterval = setInterval(async () => {
     if (relaySession) {
       const sessionId = relaySession;
@@ -349,11 +506,26 @@ function mountPlayer(session) {
   window.addEventListener('pagehide', () => clearInterval(relayInterval), { once: true });
 
   const modal = $('#upload-modal');
-  const closeUpload = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); $('#upload-form').reset(); $('#upload-status').textContent = ''; $('#upload-open').focus(); };
-  $('#upload-open').addEventListener('click', () => { modal.classList.remove('hidden'); modal.classList.add('flex'); $('#upload-file').focus(); });
+  const openUpload = (event) => {
+    event?.preventDefault?.();
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    try { $('#upload-file')?.focus(); } catch {}
+  };
+  const closeUpload = (event) => {
+    event?.preventDefault?.();
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    $('#upload-form').reset();
+    $('#upload-status').textContent = '';
+    try { $('#upload-open')?.focus(); } catch {}
+  };
+  $('#upload-open').addEventListener('click', openUpload);
   $('#upload-close').addEventListener('click', closeUpload);
-  modal.addEventListener('click', (event) => { if (event.target === modal) closeUpload(); });
-  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeUpload(); });
+  modal.addEventListener('click', (event) => { if (event.target === modal) closeUpload(event); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeUpload(event);
+  });
   $('#upload-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const file = $('#upload-file').files?.[0];
@@ -382,6 +554,174 @@ function mountPlayer(session) {
     } catch (error) { status.textContent = error.message || 'No se pudo subir la lista.'; }
     finally { button.disabled = false; }
   });
+
+  const usersModal = $('#users-modal');
+  const resetUserForm = () => {
+    $('#user-edit-orig').value = '';
+    $('#user-username').value = '';
+    $('#user-username').disabled = false;
+    $('#user-password').value = '';
+    $('#user-password').required = true;
+    $('#user-password').placeholder = 'Contraseña (mínimo 4 caracteres)';
+    $('#user-password-label').textContent = 'Contraseña';
+    $('#user-form-heading').textContent = 'Crear nuevo acceso';
+    $('#user-submit').textContent = 'Crear acceso';
+    $('#user-cancel-edit').classList.add('hidden');
+    $('#users-status').textContent = '';
+  };
+  const startEditUser = (username) => {
+    $('#user-edit-orig').value = username;
+    $('#user-username').value = username;
+    $('#user-password').value = '';
+    $('#user-password').required = false;
+    $('#user-password').placeholder = 'Nueva contraseña (vacío para no cambiar)';
+    $('#user-password-label').textContent = 'Nueva contraseña (opcional)';
+    $('#user-form-heading').textContent = `Modificar acceso: ${username}`;
+    $('#user-submit').textContent = 'Guardar cambios';
+    $('#user-cancel-edit').classList.remove('hidden');
+    $('#users-status').textContent = '';
+    $('#user-password').focus();
+  };
+  const renderUsers = (users) => {
+    const listEl = $('#users-list');
+    if (!users.length) {
+      listEl.innerHTML = '<p class="py-3 text-center text-sm text-slate-400">No hay accesos registrados.</p>';
+      return;
+    }
+    listEl.innerHTML = users.map((u) => {
+      const isCurrent = u.username === session.username;
+      return `<div class="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-amber-400">${iconSvg(Shield, 'h-4 w-4')}</div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="truncate text-sm font-semibold text-white">${escapeHtml(u.username)}</span>
+              ${isCurrent ? '<span class="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">Tú</span>' : ''}
+            </div>
+            <span class="text-xs text-slate-500">${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'Activo'}</span>
+          </div>
+        </div>
+        <div class="flex shrink-0 items-center gap-1">
+          <button type="button" data-edit-user="${escapeHtml(u.username)}" title="Modificar contraseña" aria-label="Modificar acceso de ${escapeHtml(u.username)}" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-amber-400">${iconSvg(Pencil, 'h-4 w-4')}</button>
+          ${isCurrent ? '' : `<button type="button" data-delete-user="${escapeHtml(u.username)}" title="Eliminar usuario" aria-label="Eliminar acceso de ${escapeHtml(u.username)}" class="rounded-lg p-2 text-slate-400 transition hover:bg-red-950/50 hover:text-red-400">${iconSvg(Trash2, 'h-4 w-4')}</button>`}
+        </div>
+      </div>`;
+    }).join('');
+  };
+  const loadUsers = async () => {
+    const listEl = $('#users-list');
+    listEl.innerHTML = '<p class="py-3 text-center text-sm text-slate-400">Cargando accesos…</p>';
+    try {
+      const users = await api('users', { auth: true });
+      renderUsers(users);
+    } catch (err) {
+      listEl.innerHTML = `<p class="py-3 text-center text-sm text-red-400">${escapeHtml(err.message || 'Error al cargar accesos.')}</p>`;
+    }
+  };
+  const openUsers = (event) => {
+    event?.preventDefault?.();
+    usersModal.classList.remove('hidden');
+    usersModal.classList.add('flex');
+    resetUserForm();
+    loadUsers();
+  };
+  const closeUsers = (event) => {
+    event?.preventDefault?.();
+    usersModal.classList.add('hidden');
+    usersModal.classList.remove('flex');
+    resetUserForm();
+    $('#users-status').textContent = '';
+    try { $('#users-open')?.focus(); } catch {}
+  };
+  $('#users-open').addEventListener('click', openUsers);
+  $('#users-close').addEventListener('click', closeUsers);
+  usersModal.addEventListener('click', (event) => { if (event.target === usersModal) closeUsers(event); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !usersModal.classList.contains('hidden')) closeUsers(event);
+  });
+  app.addEventListener('click', (event) => {
+    if (event.target.closest('#upload-open')) { openUpload(event); return; }
+    if (event.target.closest('#users-open')) { openUsers(event); return; }
+    if (event.target.closest('#upload-close')) { closeUpload(event); return; }
+    if (event.target.closest('#users-close')) { closeUsers(event); return; }
+  });
+  $('#user-cancel-edit').addEventListener('click', resetUserForm);
+  $('#users-list').addEventListener('click', async (event) => {
+    const editBtn = event.target.closest('[data-edit-user]');
+    if (editBtn) {
+      startEditUser(editBtn.dataset.editUser);
+      return;
+    }
+    const deleteBtn = event.target.closest('[data-delete-user]');
+    if (deleteBtn) {
+      const username = deleteBtn.dataset.deleteUser;
+      if (!confirm(`¿Seguro que deseas eliminar el acceso "${username}"?`)) return;
+      deleteBtn.disabled = true;
+      try {
+        await api('delete-user', {
+          auth: true,
+          method: 'POST',
+          body: JSON.stringify({ username }),
+          headers: { 'Content-Type': 'application/json' },
+        });
+        $('#users-status').textContent = `Acceso "${username}" eliminado.`;
+        $('#users-status').className = 'min-h-5 text-xs text-amber-400';
+        await loadUsers();
+      } catch (err) {
+        $('#users-status').textContent = err.message || 'No se pudo eliminar el acceso.';
+        $('#users-status').className = 'min-h-5 text-xs text-red-400';
+        deleteBtn.disabled = false;
+      }
+    }
+  });
+  $('#user-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const origUsername = $('#user-edit-orig').value;
+    const username = $('#user-username').value.trim();
+    const password = $('#user-password').value;
+    const submitBtn = $('#user-submit');
+    const status = $('#users-status');
+
+    submitBtn.disabled = true;
+    status.textContent = 'Guardando…';
+    status.className = 'min-h-5 text-xs text-slate-400';
+
+    try {
+      if (origUsername) {
+        await api('update-user', {
+          auth: true,
+          method: 'POST',
+          body: JSON.stringify({
+            username: origUsername,
+            newUsername: username !== origUsername ? username : undefined,
+            password: password || undefined,
+          }),
+          headers: { 'Content-Type': 'application/json' },
+        });
+        status.textContent = 'Acceso actualizado con éxito.';
+        status.className = 'min-h-5 text-xs text-emerald-400';
+        resetUserForm();
+        await loadUsers();
+      } else {
+        await api('create-user', {
+          auth: true,
+          method: 'POST',
+          body: JSON.stringify({ username, password }),
+          headers: { 'Content-Type': 'application/json' },
+        });
+        status.textContent = 'Nuevo acceso creado con éxito.';
+        status.className = 'min-h-5 text-xs text-emerald-400';
+        resetUserForm();
+        await loadUsers();
+      }
+    } catch (err) {
+      status.textContent = err.message || 'Error al guardar el acceso.';
+      status.className = 'min-h-5 text-xs text-red-400';
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
   if (session.hasPlaylist) loadPlaylist();
   else setStatus('Aún no hay canales. Puedes subir tu lista con el botón inferior.');
 }
@@ -389,8 +729,9 @@ function mountPlayer(session) {
 showLogin();
 (async () => {
   try {
-    await api('session', { auth: true });
-    mountPlayer(await api('session'));
+    const authSession = await api('session', { auth: true });
+    const playlistSession = await api('session');
+    mountPlayer({ ...playlistSession, username: authSession.username });
   } catch (error) {
     if (error.status !== 401) showLogin('No se pudo comprobar la sesión.');
   }
