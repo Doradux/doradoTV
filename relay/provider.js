@@ -4,7 +4,7 @@ export function providerFromChannel(value) {
   try {
     const url = new URL(value);
     const [, kind, username, password, stream] = url.pathname.split('/');
-    if (kind !== 'live' || !username || !password || !/^\d+\.ts$/i.test(stream || '')) return null;
+    if (!['live', 'play'].includes(kind) || !username || !password || !/^\d+\.ts$/i.test(stream || '')) return null;
     return { api: new URL('/player_api.php', url), username, password, streamId: stream.slice(0, -3) };
   } catch { return null; }
 }

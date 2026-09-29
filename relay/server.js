@@ -55,7 +55,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const processes = new Map();
   const now = clock;
   const mediaOrigin = new URL(publicUrl).origin;
-  const cors = { 'Access-Control-Allow-Origin': appOrigin, Vary: 'Origin', 'Referrer-Policy': 'no-referrer' };
+  const getCors = (req) => ({ 'Access-Control-Allow-Origin': req?.headers?.origin || appOrigin, 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin', 'Referrer-Policy': 'no-referrer' });
 
   // A restart invalidates all browser sessions and removes stale HLS output.
   registry.transaction((state) => {
@@ -140,6 +140,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, mediaOrigin);
+    const cors = getCors(request);
     if (request.method === 'OPTIONS' && url.pathname.startsWith('/media/')) {
       response.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET' }); response.end(); return;
     }

@@ -6,11 +6,11 @@ const actions = { start: '/start', ping: '/ping', close: '/close' };
 export default async function relay(request) {
   const user = await getSession(request);
   if (!user) return json({ error: 'Inicia sesión.' }, 401);
-  if (user.role !== 'admin') return json({ error: 'Acceso no autorizado.' }, 403);
   const base = process.env.DORADO_RELAY_URL;
   const secret = process.env.DORADO_RELAY_SECRET;
   const action = new URL(request.url).searchParams.get('action');
   if (request.method === 'GET' && action === 'config') return json({ enabled: !!(base && secret) });
+  if (user.role !== 'admin' && action === 'close') return json({ error: 'Acceso no autorizado.' }, 403);
   if (!base || !secret) return json({ error: 'El relay no está configurado.' }, 503);
   const path = request.method === 'GET' && action === 'status' ? '/status' : request.method === 'POST' && actions[action];
   if (!path) return json({ error: 'Ruta no encontrada.' }, 404);

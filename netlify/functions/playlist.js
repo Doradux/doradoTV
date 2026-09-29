@@ -11,7 +11,7 @@ const json = (body, status = 200) => Response.json(body, {
 export default async function playlist(request) {
   const user = await getSession(request);
   if (!user) return json({ error: 'Inicia sesión.' }, 401);
-  if (!isAdmin(user)) return json({ error: 'Acceso no autorizado.' }, 403);
+  if (request.method === 'POST' && !isAdmin(user)) return json({ error: 'Acceso no autorizado.' }, 403);
 
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
