@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { expiredCookie, hashPassword, sessionCookie, validUsername, verifyPassword, verifyRequestOrigin } from '../netlify/lib/auth.js';
+import {
+  createUser,
+  deleteUser,
+  expiredCookie,
+  hashPassword,
+  sessionCookie,
+  updateUser,
+  validUsername,
+  verifyPassword,
+  verifyRequestOrigin,
+} from '../netlify/lib/auth.js';
 
 test('passwords are salted, verifiable, and not stored in clear text', async () => {
   const first = await hashPassword('test password');
@@ -25,3 +35,18 @@ test('session cookies are inaccessible to JavaScript and mutations require same 
   assert.match(expiredCookie(request), /Max-Age=0/);
   assert.throws(() => verifyRequestOrigin(new Request(request.url, { method: 'POST', headers: { Origin: 'https://other.example.test' } })));
 });
+
+test('user management validates usernames and passwords', async () => {
+  const invalidUser = await createUser('a', '1234');
+  assert.equal(invalidUser.status, 400);
+
+  const shortPass = await createUser('validuser', '12');
+  assert.equal(shortPass.status, 400);
+
+  const selfDelete = await deleteUser('marcos', 'marcos');
+  assert.equal(selfDelete.status, 400);
+
+  const emptyUpdate = await updateUser('', '1234');
+  assert.equal(emptyUpdate.status, 400);
+});
+
