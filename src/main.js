@@ -1,98 +1,38 @@
 import './main.css';
-import { createMorph, canonicalD } from 'morphicons/dom';
+import './rooms.css';
+import { createMorph } from 'morphicons/dom';
 import {
-  Play, Pause, Volume2, VolumeX, PictureInPicture2, PictureInPicture,
+  Play, Pause, Volume, Volume1, Volume2, VolumeX, PictureInPicture2, PictureInPicture,
   RectangleHorizontal, PanelRightClose, ChevronDown, Radio,
-  Maximize, Minimize, Star, StarOff, TvMinimal, Upload, Check,
+  Maximize, Minimize, Bookmark, TvMinimal, Upload, Check,
   LogOut, LockKeyhole, X, FileUp, Search,
-  Users, UserPlus, Trash2, Pencil, Shield,
+  Settings2, DoorOpen,
 } from 'lucide';
-import { encryptPlaylist, decryptPlaylist } from './crypto.js';
 import { groupsFor, parsePlaylist } from './playlist.js';
 import { createAmbientLight } from './ambient.js';
+import { createCustomSelect } from './custom-select.js';
+import { createDialog, reveal } from './motion.js';
+import { iconSvg, morphSvg, escapeHtml } from './ui.js';
+import { roomApi, navigateRoom } from './room-api.js';
+import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
 const app = document.querySelector('#app');
-const API = '/.netlify/functions/playlist';
-const AUTH_API = '/.netlify/functions/auth';
-const RELAY_API = '/.netlify/functions/relay';
-const CHUNK_SIZE = 512 * 1024;
-
-function iconSvg(icon, classes = 'h-5 w-5') {
-  const body = icon.map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).map(([key, value]) => `${key}="${value}"`).join(' ')} />`).join('');
-  return `<svg class="${classes}" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
-}
-
-function morphSvg(icon, id, classes = 'h-5 w-5') {
-  return `<svg class="${classes}" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="${id}" d="${canonicalD(icon)}" /></svg>`;
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-}
-
-async function api(action, options = {}) {
-  const response = await fetch(`${options.auth ? AUTH_API : options.relay ? RELAY_API : API}?action=${encodeURIComponent(action)}${options.query || ''}`, {
-    method: options.method || 'GET',
-    body: options.body,
-    headers: options.headers,
-    credentials: 'same-origin',
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    const detail = await response.json().catch(() => ({}));
-    const error = new Error(detail.error || 'No se pudo completar la operación.');
-    error.status = response.status;
-    throw error;
-  }
-  return options.text ? response.text() : response.json();
-}
-
-function showLogin(message = '') {
-  app.innerHTML = `
-    <main class="login-screen flex min-h-screen items-center justify-center bg-slate-950 px-4 py-8 text-slate-100">
-      <section class="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-7 shadow-2xl shadow-black/30 sm:p-9" aria-labelledby="login-title">
-        <div class="mb-7 flex items-center gap-3"><span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400 text-2xl font-black text-slate-950" aria-hidden="true">${iconSvg(TvMinimal, 'h-6 w-6')}</span><span class="text-xl font-black tracking-tight text-white">Dorado TV</span></div>
-        <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-400">${iconSvg(LockKeyhole, 'h-6 w-6')}</div>
-        <h1 id="login-title" class="text-2xl font-bold text-white">Iniciar sesión</h1>
-        <p class="mt-2 text-sm text-slate-400">Accede a tus canales con tu cuenta.</p>
-        <form id="login-form" class="mt-7 space-y-4">
-          <div><label for="username" class="mb-1.5 block text-sm font-medium text-slate-200">Usuario</label><input id="username" name="username" type="text" required autocomplete="username" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white focus:border-amber-400 focus:outline-none" /></div>
-          <div><label for="password" class="mb-1.5 block text-sm font-medium text-slate-200">Contraseña</label><input id="password" name="password" type="password" required autocomplete="current-password" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white focus:border-amber-400 focus:outline-none" /></div>
-          <button id="login-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">Entrar</button>
-        </form>
-        <p id="login-error" class="mt-4 min-h-5 text-sm text-red-300" role="alert">${escapeHtml(message)}</p>
-      </section>
-    </main>`;
-  app.querySelector('#login-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const button = app.querySelector('#login-submit');
-    const error = app.querySelector('#login-error');
-    button.disabled = true;
-    button.textContent = 'Entrando…';
-    error.textContent = '';
-    try {
-      await api('login', { auth: true, method: 'POST', body: JSON.stringify({ username: app.querySelector('#username').value.trim(), password: app.querySelector('#password').value }), headers: { 'Content-Type': 'application/json' } });
-      const authSession = await api('session', { auth: true });
-      const playlistSession = await api('session');
-      mountPlayer({ ...playlistSession, username: authSession.username });
-    } catch (cause) {
-      error.textContent = cause.message || 'No se pudo iniciar sesión.';
-      button.disabled = false;
-      button.textContent = 'Entrar';
-    }
-  });
-}
-
-function mountPlayer(session) {
+window.addEventListener('pageshow', (event) => { if (event.persisted) location.reload(); });
+window.addEventListener('hashchange', () => {
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.has('verify') || hash.has('reset')) location.reload();
+});
+function mountPlayer(session, account) {
+  const inRoom = (action, options = {}) => roomApi(action, { ...options, room: session.slug });
   app.innerHTML = `
   <div class="app-shell">
     <header class="app-header">
       <a href="#" class="brand">
         <div>
-          <span>Dorado<span class="brand-tv">TV</span></span>
+          <span>Dorado<span class="brand-tv">TV</span></span><span id="current-room-title" class="brand-caption">${escapeHtml(session.title)}</span>
         </div>
       </a>
-      <div class="header-actions">
+      <div class="header-actions"><button id="leave-room" class="text-link">${iconSvg(DoorOpen, 'h-4 w-4')}<span>${account ? 'Mis salas' : 'Salir de la sala'}</span></button>
         <button id="logout" type="button" title="Cerrar sesión" aria-label="Cerrar sesión" class="rounded-xl border border-slate-700 p-2.5 text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(LogOut)}</button>
       </div>
     </header>
@@ -104,15 +44,13 @@ function mountPlayer(session) {
             <video id="video" playsinline preload="none" aria-label="Vídeo del canal seleccionado"></video>
             <div id="empty" class="empty-player">
               <div class="empty-icon">${iconSvg(TvMinimal, 'h-9 w-9')}</div>
-              <span class="eyebrow">TU MOMENTO, TU CANAL</span>
-              <h2>¿Qué te apetece ver?</h2>
-              <p>Elige un canal y ponte cómodo.</p>
+              <h2>Selecciona un canal</h2>
             </div>
             <div id="loading" class="absolute inset-0 z-10 hidden items-center justify-center bg-black/60" role="status"><span class="loading-label"><span class="loading-dot"></span>Conectando con la emisión…</span></div>
           </div>
           <div class="player-controls">
             <button id="play" type="button" title="Reproducir" aria-label="Reproducir" class="icon-button play-button">${morphSvg(Play, 'play-icon')}</button>
-            <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.05" value="0.8" aria-label="Volumen" /></div>
+            <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen" /><output id="volume-value" for="volume" class="volume-value" aria-hidden="true">80%</output></div>
             <span id="playback-badge" class="playback-badge">EN DIRECTO</span>
             <div class="view-controls">
               <button id="pip" type="button" title="Ventana flotante" aria-label="Ventana flotante" aria-pressed="false" class="icon-button">${morphSvg(PictureInPicture2, 'pip-icon')}</button>
@@ -121,81 +59,39 @@ function mountPlayer(session) {
             </div>
           </div>
         </div>
-        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">AHORA EN TU PANTALLA</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p></div></div>
-        <section id="relay-panel" class="hidden rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5" aria-label="Conexiones compartidas"><div class="flex items-center justify-between gap-3"><h2 class="font-bold text-white">Conexiones compartidas</h2><span id="relay-count" class="text-xs text-slate-400"></span></div><div id="relay-connections" class="mt-3 space-y-2 text-sm text-slate-300"></div></section>
+        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p></div></div>
+        <section id="relay-panel" class="${session.owner ? '' : 'hidden'} relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><span id="relay-count" class="channel-count"></span></div><div id="relay-connections" class="relay-connections"></div></section>
       </section>
       <aside class="channel-panel" aria-label="Canales">
-        <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">EXPLORA TU LISTA</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
+        <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">LISTA DE CANALES</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
           <label for="search" class="sr-only">Buscar canales</label><div class="search-field">${iconSvg(Search, 'h-4 w-4')}<input id="search" type="search" placeholder="Buscar canal o categoría…" /></div>
-          <div class="filter-row"><div class="category-field"><label for="category" class="sr-only">Filtrar categoría</label><select id="category"><option value="">Todas las categorías</option></select>${iconSvg(ChevronDown, 'h-4 w-4')}</div><button id="favorites" type="button" class="favorites-filter" title="Mostrar favoritos" aria-label="Mostrar favoritos" aria-pressed="false">${morphSvg(StarOff, 'favorites-icon', 'h-4 w-4')}<span>Favoritos</span></button></div>
+          <div class="filter-row"><div class="category-field"><select id="category" hidden aria-hidden="true" tabindex="-1"><option value="">Todas las categorías</option></select><button id="category-trigger" type="button" class="select-trigger" role="combobox" aria-label="Filtrar categoría" aria-haspopup="listbox" aria-expanded="false" aria-controls="category-options"><span id="category-label">Todas las categorías</span>${morphSvg(ChevronDown, 'category-chevron', 'h-4 w-4')}</button><div id="category-options" class="select-menu" role="listbox" aria-label="Categorías" aria-hidden="true"></div></div><button id="favorites" type="button" class="favorites-filter" title="Mostrar favoritos" aria-label="Mostrar favoritos" aria-pressed="false">${iconSvg(Bookmark, 'h-4 w-4 favorite-icon')}<span>Favoritos</span></button></div>
         </div>
         <div id="channel-list" class="channel-list" role="list"><p class="list-empty">Los canales aparecerán aquí.</p></div><div id="more-wrap" class="hidden border-t border-slate-800 p-3"><button id="more" type="button" class="more-button">Mostrar más canales</button></div>
       </aside>
     </main>
-    <div class="fixed bottom-5 left-5 z-40 flex items-center gap-3">
+    <div class="${session.owner ? 'flex' : 'hidden'} fixed bottom-5 left-5 z-40 items-center gap-3">
       <div class="group relative">
         <button id="upload-open" type="button" aria-label="Subir lista de canales" aria-haspopup="dialog" title="Subir lista de canales" class="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border border-amber-300 bg-amber-400 text-slate-950 shadow-xl shadow-black/40 transition hover:bg-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"><span class="pointer-events-none flex items-center justify-center">${morphSvg(Upload, 'upload-icon')}</span></button>
         <span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Subir lista de canales</span>
       </div>
       <div class="group relative">
-        <button id="users-open" type="button" aria-label="Gestionar accesos" aria-haspopup="dialog" title="Gestionar accesos" class="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-amber-400 shadow-xl shadow-black/40 transition hover:border-amber-400 hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"><span class="pointer-events-none flex items-center justify-center">${iconSvg(Users, 'h-5 w-5')}</span></button>
-        <span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Gestionar accesos</span>
+        <button id="settings-open" type="button" aria-label="Ajustes de la sala" aria-haspopup="dialog" title="Ajustes de la sala" class="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-amber-400 shadow-xl shadow-black/40 transition hover:border-amber-400 hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"><span class="pointer-events-none flex items-center justify-center">${iconSvg(Settings2, 'h-5 w-5')}</span></button>
+        <span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Ajustes de la sala</span>
       </div>
     </div>
-    <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Selecciona el archivo. Se guardará cifrado y quedará disponible al iniciar sesión.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u,.m3u8,text/plain" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
-    <div id="users-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="users-title">
-      <div class="flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7">
-        <div class="flex items-center justify-between gap-4 border-b border-slate-800 pb-4">
-          <div class="flex items-center gap-3 text-amber-400">
-            ${iconSvg(Users, 'h-6 w-6')}
-            <h2 id="users-title" class="text-xl font-bold text-white">Gestionar accesos</h2>
-          </div>
-          <button id="users-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button>
-        </div>
-        <div class="my-4 flex-1 space-y-4 overflow-y-auto pr-1">
-          <div>
-            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Accesos configurados</h3>
-            <div id="users-list" class="space-y-2">
-              <p class="py-3 text-center text-sm text-slate-400">Cargando accesos…</p>
-            </div>
-          </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-            <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
-              <span id="user-form-icon">${iconSvg(UserPlus, 'h-4 w-4 text-amber-400')}</span>
-              <span id="user-form-heading">Crear nuevo acceso</span>
-            </h3>
-            <form id="user-form" class="space-y-3">
-              <input type="hidden" id="user-edit-orig" value="" />
-              <div>
-                <label for="user-username" class="mb-1 block text-xs font-medium text-slate-300">Usuario</label>
-                <input id="user-username" type="text" required autocomplete="off" placeholder="Nombre de usuario" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" />
-              </div>
-              <div>
-                <label for="user-password" id="user-password-label" class="mb-1 block text-xs font-medium text-slate-300">Contraseña</label>
-                <input id="user-password" type="password" required autocomplete="new-password" placeholder="Contraseña (mínimo 4 caracteres)" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" />
-              </div>
-              <p id="users-status" class="min-h-5 text-xs text-slate-400" role="status" aria-live="polite"></p>
-              <div class="flex gap-2">
-                <button id="user-submit" type="submit" class="flex-1 rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Crear acceso</button>
-                <button id="user-cancel-edit" type="button" class="hidden rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:border-slate-500 hover:text-white">Cancelar</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Sube un archivo .m3u de hasta 10 MB. Se guardará cifrado para esta sala; la lista actual se conserva si la subida falla.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
   </div>`;
 
   const $ = (selector) => app.querySelector(selector);
+  const categorySelect = createCustomSelect($('#category'), $('#category-trigger'), $('#category-options'), $('#category-label'), $('#category-chevron'));
   const video = $('#video');
   const ambient = createAmbientLight(video, $('#ambient'), $('#video-stage'));
-  const channelMorphs = new Map();
   const theaterMorph = createMorph($('#theater-icon'), RectangleHorizontal, { reducedMotion: 'user' });
   const volumeMorph = createMorph($('#volume-icon'), Volume2, { reducedMotion: 'user' });
   const pipMorph = createMorph($('#pip-icon'), PictureInPicture2, { reducedMotion: 'user' });
   const playMorph = createMorph($('#play-icon'), Play, { reducedMotion: 'user' });
   const fullscreenMorph = createMorph($('#fullscreen-icon'), Maximize, { reducedMotion: 'user' });
-  const favoritesMorph = createMorph($('#favorites-icon'), StarOff, { reducedMotion: 'user' });
   const uploadMorph = createMorph($('#upload-icon'), Upload, { reducedMotion: 'user' });
   let channels = [];
   let filtered = [];
@@ -205,22 +101,29 @@ function mountPlayer(session) {
   let visible = 80;
   let onlyFavorites = false;
   let playbackToken = 0;
-  let playlistKey = null;
-  let relayEnabled = false;
-  let relaySession = null;
-  const tabId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const relayApi = (action, options = {}) => api(action, { ...options, relay: true });
-  const relayReady = relayApi('config').then(({ enabled }) => {
-    relayEnabled = enabled;
-    $('#relay-panel').classList.toggle('hidden', !enabled);
-    if (enabled) refreshConnections();
-  }).catch(() => {});
+  let playbackLease = null;
+  let releasePending = Promise.resolve();
+  let heartbeatPending = false;
+  let pageUnloading = false;
+  let connectionsRefreshPromise = null;
+  let connectionsRefreshTimer = null;
+  let retryTimer = null;
+  const tabKey = `dorado-tv:tab:${session.slug}`;
+  const playbackKey = `dorado-tv:playback:${session.slug}`;
+  const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
+  let tabId = isReload ? sessionStorage.getItem(tabKey) : null;
+  if (!tabId) {
+    tabId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem(tabKey, tabId);
+  }
+  const favoritesKey = `dorado-tv:favorites:${session.slug}`;
   let savedFavorites = [];
-  try { savedFavorites = JSON.parse(localStorage.getItem('dorado-tv:favorites') || '[]'); } catch { localStorage.removeItem('dorado-tv:favorites'); }
+  try { savedFavorites = JSON.parse(localStorage.getItem(favoritesKey) || '[]'); } catch { localStorage.removeItem(favoritesKey); }
   const favorites = new Set(Array.isArray(savedFavorites) ? savedFavorites : []);
 
   function setStatus(message, error = false) {
     const target = $('#status');
+    if (target.textContent !== message) reveal(target);
     target.textContent = message;
     target.classList.toggle('text-red-300', error);
     target.classList.toggle('text-slate-400', !error);
@@ -236,12 +139,32 @@ function mountPlayer(session) {
     $('#play').title = isPlaying ? 'Pausar' : 'Reproducir';
   }
   function keyOf(channel) { return `${channel.group}\u0000${channel.name}`; }
+  function rememberPlayback(channel) {
+    sessionStorage.setItem(playbackKey, JSON.stringify({ id: channel.id, key: keyOf(channel) }));
+  }
+  function clearRememberedPlayback() {
+    sessionStorage.removeItem(playbackKey);
+  }
+  function rememberedChannel() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(playbackKey) || 'null');
+      if (!saved) return null;
+      return channels.find((channel) => channel.id === saved.id && keyOf(channel) === saved.key)
+        || channels.find((channel) => keyOf(channel) === saved.key)
+        || null;
+    } catch {
+      clearRememberedPlayback();
+      return null;
+    }
+  }
   function stop() {
     playbackToken += 1;
-    if (relaySession) {
-      const sessionId = relaySession;
-      relaySession = null;
-      relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: sessionId, is_playing: false }), headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    if (playbackLease) {
+      const id = playbackLease.id;
+      playbackLease = null;
+      releasePending = inRoom('release', { data: { id }, keepalive: true }).catch(() => {});
     }
     ambient.reset();
     video.pause();
@@ -252,47 +175,41 @@ function mountPlayer(session) {
     setLoading(false);
     setPlayIcon(false);
   }
-  const AVATAR_BG = [
-    'bg-amber-400 text-slate-950',
-    'bg-sky-400 text-slate-950',
-    'bg-emerald-400 text-slate-950',
-    'bg-violet-400 text-white',
-    'bg-rose-400 text-white',
-    'bg-indigo-400 text-white',
-  ];
-  function avatarColor(name = '') {
-    let hash = 0;
-    for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-    return AVATAR_BG[hash % AVATAR_BG.length];
+  function refreshConnections() {
+    if (!session.owner || document.hidden) return Promise.resolve();
+    if (connectionsRefreshPromise) return connectionsRefreshPromise;
+    connectionsRefreshPromise = (async () => {
+      try {
+        const data = await inRoom('status');
+        $('#relay-count').textContent = `${data.active} / ${data.limit ?? '∞'} conexiones`;
+        $('#relay-connections').innerHTML = data.connections.length ? data.connections.map((connection) => `
+          <div class="connection-row">
+            <div class="connection-info">
+              <span class="connection-channel">${escapeHtml(connection.channelName)}</span>
+              <span class="connection-user">${escapeHtml(connection.name)}</span>
+            </div>
+            <button type="button" data-close-emission="${escapeHtml(connection.id)}" class="connection-close">Cerrar</button>
+          </div>
+        `).join('') : `<div class="connection-empty">${iconSvg(Radio, 'h-4 w-4')}<span>Nadie está reproduciendo ahora.</span></div>`;
+      } catch {
+        $('#relay-count').textContent = 'Sin conexión';
+      } finally {
+        connectionsRefreshPromise = null;
+      }
+    })();
+    return connectionsRefreshPromise;
   }
-  function renderUserAvatars(users = []) {
-    if (!users.length) return '';
-    const list = users.slice(0, 3);
-    const remaining = users.length - list.length;
-    const styles = [
-      'z-30 opacity-100 scale-100',
-      'z-20 opacity-[0.85] scale-[0.90]',
-      'z-10 opacity-[0.70] scale-[0.80]',
-    ];
-    const items = list.map((user, idx) => {
-      const initial = escapeHtml((user.name || '?')[0].toUpperCase());
-      const name = escapeHtml(user.name || 'Usuario');
-      const posStyle = styles[idx] || styles[2];
-      const color = avatarColor(user.name || '');
-      return `<span class="group/avatar relative flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-900 font-bold text-xs uppercase shadow-sm transition-all duration-200 ${posStyle} group-hover/stack:opacity-100 group-hover/stack:scale-100 hover:!opacity-100 hover:!scale-105 hover:!z-40 ${color}"><span class="pointer-events-none select-none">${initial}</span><span role="tooltip" class="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] font-medium text-white shadow-xl opacity-0 transition-opacity duration-150 group-hover/avatar:opacity-100 z-50">${name}</span></span>`;
-    });
-    if (remaining > 0) {
-      items.push(`<span class="group/avatar relative flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-900 bg-slate-800 text-[10px] font-bold text-slate-300 shadow-sm transition-all duration-200 z-0 opacity-[0.60] scale-[0.75] group-hover/stack:opacity-100 group-hover/stack:scale-100 hover:!opacity-100 hover:!scale-105 hover:!z-40"><span class="pointer-events-none select-none">+${remaining}</span><span role="tooltip" class="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] font-medium text-white shadow-xl opacity-0 transition-opacity duration-150 group-hover/avatar:opacity-100 z-50">+${remaining} más</span></span>`);
-    }
-    return `<div class="group/stack flex items-center -space-x-2 py-0.5">${items.join('')}</div>`;
+  function stopConnectionsPolling() {
+    clearTimeout(connectionsRefreshTimer);
+    connectionsRefreshTimer = null;
   }
-  async function refreshConnections() {
-    if (!relayEnabled) return;
-    try {
-      const data = await relayApi('status');
-      $('#relay-count').textContent = `${data.active_count}/${data.max_connections} canales`;
-      $('#relay-connections').innerHTML = data.connections.length ? data.connections.map((connection) => `<div class="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-3.5 py-2.5"><div class="flex min-w-0 items-center gap-2 truncate"><strong class="truncate text-sm font-semibold text-white">${escapeHtml(connection.channel_name)}</strong>${connection.program ? `<span class="truncate text-xs text-slate-400">· ${escapeHtml(connection.program)}</span>` : ''}</div><div class="flex shrink-0 items-center gap-3">${renderUserAvatars(connection.users)}${connection.emission_id ? `<button type="button" data-close-emission="${escapeHtml(connection.emission_id)}" class="rounded-lg border border-rose-500/40 px-3 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-600 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300">Cerrar canal</button>` : ''}</div></div>`).join('') : '<p class="text-slate-400">No hay emisiones activas.</p>';
-    } catch { $('#relay-count').textContent = 'Sin conexión'; }
+  function startConnectionsPolling() {
+    stopConnectionsPolling();
+    if (!session.owner || document.hidden) return;
+    connectionsRefreshTimer = setTimeout(async () => {
+      await refreshConnections();
+      startConnectionsPolling();
+    }, 5000);
   }
   function renderChannels() {
     const query = $('#search').value.trim().toLocaleLowerCase('es');
@@ -300,17 +217,14 @@ function mountPlayer(session) {
     filtered = channels.filter((channel) => (!category || channel.group === category) && (!onlyFavorites || favorites.has(keyOf(channel))) && (!query || `${channel.name} ${channel.group}`.toLocaleLowerCase('es').includes(query)));
     $('#count').textContent = `${filtered.length.toLocaleString('es')} canales`;
     const shown = filtered.slice(0, visible);
-    channelMorphs.forEach((morph) => morph.destroy());
-    channelMorphs.clear();
-    $('#channel-list').innerHTML = shown.length ? shown.map((channel) => {
+    $('#channel-list').innerHTML = shown.length ? shown.map((channel, index) => {
       const selected = channel === active;
       const favorite = favorites.has(keyOf(channel));
-      return `<div role="listitem" class="channel-row ${selected ? 'is-selected' : ''}"><button type="button" data-channel="${channel.id}" aria-current="${selected ? 'true' : 'false'}" class="channel-select">${channel.logo ? `<img src="${escapeHtml(channel.logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" class="channel-logo" />` : `<span class="channel-logo" aria-hidden="true">${iconSvg(TvMinimal)}</span>`}<span class="channel-copy"><span class="channel-name">${escapeHtml(channel.name)}</span><span class="channel-group">${escapeHtml(channel.group)}</span></span>${selected ? `<span class="selected-indicator" aria-hidden="true">${iconSvg(Radio, 'h-4 w-4')}</span>` : ''}</button><button type="button" data-favorite="${channel.id}" title="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}" aria-label="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}: ${escapeHtml(channel.name)}" aria-pressed="${favorite}" class="channel-favorite">${morphSvg(favorite ? Star : StarOff, `favorite-${channel.id}`, 'h-4 w-4')}</button></div>`;
-    }).join('') : `<div class="list-empty">${iconSvg(Search, 'h-6 w-6')}<p>${channels.length ? 'No hay canales para este filtro.' : 'Tu lista empieza aquí.'}</p><span>${channels.length ? 'Prueba con otro nombre o categoría.' : 'Sube una lista para empezar a ver tus canales.'}</span></div>`;
-    shown.forEach((channel) => channelMorphs.set(channel.id, createMorph($(`#favorite-${channel.id}`), favorites.has(keyOf(channel)) ? Star : StarOff, { reducedMotion: 'user' })));
+      return `<div role="listitem" style="--row-delay: ${Math.min(index, 9) * 22}ms" class="channel-row ${selected ? 'is-selected' : ''}"><button type="button" data-channel="${channel.id}" aria-current="${selected ? 'true' : 'false'}" class="channel-select">${channel.logo ? `<img src="${escapeHtml(channel.logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" class="channel-logo" />` : `<span class="channel-logo" aria-hidden="true">${iconSvg(TvMinimal)}</span>`}<span class="channel-copy"><span class="channel-name">${escapeHtml(channel.name)}</span><span class="channel-group">${escapeHtml(channel.group)}</span></span>${selected ? `<span class="selected-indicator" aria-hidden="true">${iconSvg(Radio, 'h-4 w-4')}</span>` : ''}</button><button type="button" data-favorite="${channel.id}" title="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}" aria-label="${favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}: ${escapeHtml(channel.name)}" aria-pressed="${favorite}" class="channel-favorite">${iconSvg(Bookmark, 'h-4 w-4 favorite-icon')}</button></div>`;
+    }).join('') : `<div class="list-empty">${iconSvg(Search, 'h-6 w-6')}<p>${channels.length ? 'No hay canales para este filtro.' : 'No hay canales.'}</p><span>${channels.length ? 'Prueba con otro nombre o categoría.' : 'Sube una lista para empezar a ver tus canales.'}</span></div>`;
     $('#more-wrap').classList.toggle('hidden', filtered.length <= visible);
   }
-  function setPlaylist(next) {
+  function setPlaylist(next, { resume = false } = {}) {
     stop();
     channels = next;
     active = null;
@@ -318,47 +232,42 @@ function mountPlayer(session) {
     $('#now-name').textContent = 'Ningún canal seleccionado';
     $('#empty').classList.remove('hidden');
     $('#category').innerHTML = `<option value="">Todas las categorías</option>${groupsFor(channels).map((group) => `<option value="${escapeHtml(group)}">${escapeHtml(group)}</option>`).join('')}`;
+    categorySelect.refresh();
     $('#search').value = '';
     onlyFavorites = false;
     $('#favorites').setAttribute('aria-pressed', 'false');
-    favoritesMorph.morphTo(StarOff, 'snappy');
     renderChannels();
-    setStatus(channels.length ? `${channels.length.toLocaleString('es')} canales disponibles. Selecciona uno para reproducir.` : 'La lista no contiene canales válidos.', !channels.length);
+    setStatus('');
+    if (!resume) {
+      clearRememberedPlayback();
+      return;
+    }
+    const previous = rememberedChannel();
+    if (previous) play(previous, { resume: true });
+    else clearRememberedPlayback();
   }
-  async function play(channel) {
+  async function play(channel, { resume = false } = {}) {
     if (!channel) return;
     stop();
     const token = playbackToken;
     active = channel;
+    rememberPlayback(channel);
     $('#now-name').textContent = channel.name;
+    reveal($('#now-name'));
     document.title = `${channel.name} · Dorado TV`;
     $('#empty').classList.add('hidden');
     renderChannels();
     setLoading(true);
     setStatus(`Conectando con ${channel.name}…`);
     try {
-      await relayReady;
+      await releasePending;
       if (token !== playbackToken) return;
-      let source = channel.url;
-      if (relayEnabled) {
-        const started = await relayApi('start', { method: 'POST', body: JSON.stringify({ channel: { url: channel.url, name: channel.name }, tab: tabId }), headers: { 'Content-Type': 'application/json' } });
-        if (token !== playbackToken) {
-          relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: started.session_id, is_playing: false }), headers: { 'Content-Type': 'application/json' } }).catch(() => {});
-          return;
-        }
-        relaySession = started.session_id;
-        source = started.playlist_url;
-        refreshConnections();
-        let ready = false;
-        for (let attempt = 0; attempt < 36; attempt += 1) {
-          if (token !== playbackToken) return;
-          const state = await relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: started.session_id, is_playing: true }), headers: { 'Content-Type': 'application/json' } });
-          if (state.status === 'running') { ready = true; break; }
-          if (state.kicked || state.status === 'failed' || state.status === 'closed') throw new Error('El proveedor no está emitiendo este canal.');
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-        if (!ready) throw new Error('La señal no estuvo disponible a tiempo.');
-      } else if (location.protocol === 'https:' && source.startsWith('http:')) throw new Error('Este canal necesita una señal HTTPS para reproducirse aquí.');
+      if (location.protocol === 'https:' && channel.url.startsWith('http:')) throw new Error('Este canal necesita una señal HTTPS para reproducirse aquí.');
+      const started = await inRoom('start', { data: { channelId: channel.id, tab: tabId } });
+      if (token !== playbackToken) { inRoom('release', { data: { id: started.id } }).catch(() => {}); return; }
+      playbackLease = started;
+      const source = started.url;
+      refreshConnections();
       const path = new URL(source).pathname.toLowerCase();
       if (path.endsWith('.m3u8')) {
         if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = source;
@@ -367,7 +276,7 @@ function mountPlayer(session) {
           if (token !== playbackToken) return;
           if (!Hls.isSupported()) throw new Error('HLS no disponible');
           hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-          hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && token === playbackToken) { setLoading(false); setStatus('No se pudo reproducir el canal. Comprueba la señal.', true); } });
+          hls.on(Hls.Events.ERROR, (_event, data) => { if (!pageUnloading && data.fatal && token === playbackToken) { clearRememberedPlayback(); stop(); setStatus('No se pudo reproducir el canal. Comprueba la señal.', true); } });
           hls.loadSource(source);
           hls.attachMedia(video);
         }
@@ -379,34 +288,31 @@ function mountPlayer(session) {
         ts.attachMediaElement(video);
         ts.load();
       } else video.src = source;
-      await video.play();
+      try {
+        await video.play();
+      } catch (error) {
+        if (!resume || error?.name !== 'NotAllowedError' || token !== playbackToken) throw error;
+        video.muted = true;
+        await video.play();
+      }
       if (token !== playbackToken) return;
       setLoading(false);
       setStatus(`Reproduciendo ${channel.name}.`);
     } catch (error) {
       if (token !== playbackToken) return;
-      if (relaySession) stop();
+      if (playbackLease) stop();
       setLoading(false);
+      if (error.full) retryTimer = setTimeout(() => { if (active === channel && !document.hidden) play(channel); }, 30000);
       setStatus(error?.name === 'NotAllowedError' ? 'Pulsa Reproducir para iniciar el canal.' : error.message || 'No se pudo reproducir este canal. Comprueba la señal.', error?.name !== 'NotAllowedError');
     }
   }
 
-  $('#logout').addEventListener('click', async () => { stop(); await api('logout', { auth: true, method: 'POST' }).catch(() => {}); location.reload(); });
-  async function getKey() {
-    if (!playlistKey) playlistKey = (await api('key')).key;
-    return playlistKey;
-  }
+  $('#leave-room').addEventListener('click', async () => { clearRememberedPlayback(); stop(); await releasePending; navigateRoom(); });
+  $('#logout').addEventListener('click', async () => { clearRememberedPlayback(); stop(); await releasePending; await roomApi('logout', { data: {} }); navigateRoom(); });
   async function loadPlaylist() {
     setStatus('Cargando canales…');
-    try {
-      const manifest = await api('manifest');
-      const parts = [];
-      for (let index = 0; index < manifest.count; index += 1) parts.push(await api('chunk', { query: `&index=${index}`, text: true }));
-      const plaintext = await decryptPlaylist(JSON.parse(parts.join('')), await getKey());
-      setPlaylist(parsePlaylist(plaintext));
-    } catch (error) {
-      setStatus(error.status === 404 ? 'Aún no hay una lista de canales.' : error.message?.includes('no compatible') ? 'Vuelve a subir la lista para activar el acceso automático.' : 'No se pudo cargar la lista de canales.', true);
-    }
+    try { const { source } = await inRoom('playlist'); setPlaylist(parsePlaylist(source), { resume: isReload }); }
+    catch (error) { setStatus(error.message, true); }
   }
   $('#channel-list').addEventListener('click', (event) => {
     const favoriteButton = event.target.closest('[data-favorite]');
@@ -417,48 +323,137 @@ function mountPlayer(session) {
     if (favoriteButton) {
       const key = keyOf(channel);
       if (favorites.has(key)) favorites.delete(key); else favorites.add(key);
-      localStorage.setItem('dorado-tv:favorites', JSON.stringify([...favorites]));
+      localStorage.setItem(favoritesKey, JSON.stringify([...favorites]));
       const favorite = favorites.has(key);
       favoriteButton.setAttribute('aria-pressed', String(favorite));
       favoriteButton.title = favorite ? 'Quitar de favoritos' : 'Añadir a favoritos';
       favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${channel.name}`);
-      channelMorphs.get(channel.id)?.morphTo(favorite ? Star : StarOff, 'snappy');
       if (onlyFavorites) setTimeout(renderChannels, 250);
     } else play(channel);
   });
   $('#search').addEventListener('input', () => { visible = 80; renderChannels(); });
   $('#category').addEventListener('change', () => { visible = 80; renderChannels(); });
-  $('#favorites').addEventListener('click', () => { onlyFavorites = !onlyFavorites; $('#favorites').setAttribute('aria-pressed', String(onlyFavorites)); favoritesMorph.morphTo(onlyFavorites ? Star : StarOff, 'snappy'); visible = 80; renderChannels(); });
+  $('#favorites').addEventListener('click', () => { onlyFavorites = !onlyFavorites; $('#favorites').setAttribute('aria-pressed', String(onlyFavorites)); visible = 80; renderChannels(); });
   $('#more').addEventListener('click', () => { visible += 80; renderChannels(); });
-  $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused) { stop(); setStatus('Emisión pausada.'); } else if (relayEnabled) play(active); else if (video.currentSrc) video.play().catch(() => play(active)); else play(active); });
+  $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
   $('#relay-connections').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-close-emission]');
     if (!button) return;
     button.disabled = true;
     try {
-      await relayApi('close', { method: 'POST', body: JSON.stringify({ emission_id: button.dataset.closeEmission }), headers: { 'Content-Type': 'application/json' } });
+      await inRoom('close', { data: { id: button.dataset.closeEmission } });
       await refreshConnections();
     } catch (error) { setStatus(error.message, true); button.disabled = false; }
   });
   $('#theater').addEventListener('click', () => {
-    const enabled = $('#watch-layout').classList.toggle('is-theater');
+    const layout = $('#watch-layout');
+    const shell = $('#player-shell');
+    const panel = $('.channel-panel');
+    const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReducedMotion) {
+      const enabled = layout.classList.toggle('is-theater');
+      $('#theater').setAttribute('aria-pressed', String(enabled));
+      $('#theater').title = enabled ? 'Vista normal' : 'Modo cine';
+      $('#theater').setAttribute('aria-label', $('#theater').title);
+      theaterMorph.morphTo(enabled ? PanelRightClose : RectangleHorizontal, 'snappy');
+      return;
+    }
+
+    const firstShell = shell.getBoundingClientRect();
+    const belowElements = [...shell.parentElement.children].filter((el) => el !== shell && !el.classList.contains('hidden'));
+    const firstBelow = belowElements.map((el) => el.getBoundingClientRect());
+
+    const enabled = layout.classList.toggle('is-theater');
     $('#theater').setAttribute('aria-pressed', String(enabled));
     $('#theater').title = enabled ? 'Vista normal' : 'Modo cine';
     $('#theater').setAttribute('aria-label', $('#theater').title);
     theaterMorph.morphTo(enabled ? PanelRightClose : RectangleHorizontal, 'snappy');
+
+    const lastShell = shell.getBoundingClientRect();
+    if (!firstShell.width || !lastShell.width || !firstShell.height || !lastShell.height) return;
+
+    const dx = firstShell.left - lastShell.left;
+    const dy = firstShell.top - lastShell.top;
+    const sw = firstShell.width / lastShell.width;
+    const sh = firstShell.height / lastShell.height;
+
+    const duration = 400;
+    const easing = 'cubic-bezier(.2, .8, .2, 1)';
+
+    shell.getAnimations().forEach((a) => a.cancel());
+    shell.animate([
+      {
+        transformOrigin: 'top left',
+        transform: `translate(${dx}px, ${dy}px) scale(${sw}, ${sh})`,
+        borderRadius: enabled ? '20px' : '0px',
+      },
+      {
+        transformOrigin: 'top left',
+        transform: 'translate(0, 0) scale(1, 1)',
+        borderRadius: enabled ? '0px' : '20px',
+      },
+    ], {
+      duration,
+      easing,
+    });
+
+    belowElements.forEach((el, index) => {
+      const last = el.getBoundingClientRect();
+      const first = firstBelow[index];
+      if (!first) return;
+      const elDy = first.top - last.top;
+      const elDx = first.left - last.left;
+      el.getAnimations().forEach((a) => a.cancel());
+      el.animate([
+        { transform: `translate(${elDx}px, ${elDy}px)` },
+        { transform: 'translate(0, 0)' },
+      ], {
+        duration,
+        easing,
+      });
+    });
+
+    if (panel) {
+      panel.getAnimations().forEach((a) => a.cancel());
+      panel.animate([
+        { opacity: 0.3, transform: enabled ? 'translateY(24px)' : 'translateX(24px)' },
+        { opacity: 1, transform: 'translate(0, 0)' },
+      ], {
+        duration: duration * 1.05,
+        easing,
+      });
+    }
   });
   video.volume = Number($('#volume').value);
+  let volumeState = 'high';
+  let audibleVolume = video.volume;
   const updateVolume = () => {
     const muted = video.muted || video.volume === 0;
-    volumeMorph.morphTo(muted ? VolumeX : Volume2, 'snappy');
+    const level = muted ? 0 : video.volume;
+    const state = muted ? 'muted' : level < .25 ? 'low' : level < .6 ? 'medium' : 'high';
+    if (state !== volumeState) {
+      volumeMorph.morphTo({ muted: VolumeX, low: Volume, medium: Volume1, high: Volume2 }[state], 'snappy');
+      volumeState = state;
+    }
+    if (level > 0) audibleVolume = level;
+    const percent = Math.round(level * 100);
+    $('#mute').dataset.volumeState = state;
     $('#mute').setAttribute('aria-pressed', String(muted));
     $('#mute').title = muted ? 'Activar sonido' : 'Silenciar';
     $('#mute').setAttribute('aria-label', $('#mute').title);
-    $('#volume').value = video.muted ? 0 : video.volume;
-    $('#volume').style.setProperty('--volume', `${Number($('#volume').value) * 100}%`);
+    $('#volume').value = level;
+    $('#volume').setAttribute('aria-valuetext', muted ? 'Silenciado' : `${percent} por ciento`);
+    $('#volume').style.setProperty('--volume', `${percent}%`);
+    $('.volume-control').style.setProperty('--volume-strength', level);
+    $('#volume-value').value = `${percent}%`;
   };
-  $('#mute').addEventListener('click', () => { if (video.volume === 0) { video.volume = 0.8; video.muted = false; } else video.muted = !video.muted; });
-  $('#volume').addEventListener('input', (event) => { video.volume = Number(event.target.value); video.muted = false; });
+  $('#mute').addEventListener('click', () => {
+    if (video.volume === 0) { video.volume = audibleVolume || .8; video.muted = false; }
+    else video.muted = !video.muted;
+    updateVolume();
+  });
+  $('#volume').addEventListener('input', (event) => { video.volume = Number(event.target.value); video.muted = false; updateVolume(); });
   video.addEventListener('volumechange', updateVolume);
   updateVolume();
   $('#pip').disabled = !document.pictureInPictureEnabled;
@@ -491,34 +486,57 @@ function mountPlayer(session) {
   video.addEventListener('pause', () => setPlayIcon(false));
   video.addEventListener('waiting', () => setLoading(true));
   video.addEventListener('playing', () => setLoading(false));
-  video.addEventListener('error', () => { if (active) { setLoading(false); setStatus('El navegador no pudo abrir la emisión.', true); } });
-  window.addEventListener('pagehide', () => { stop(); ambient.destroy(); }, { once: true });
-  const relayInterval = setInterval(async () => {
-    if (relaySession) {
-      const sessionId = relaySession;
-      try {
-        const state = await relayApi('ping', { method: 'POST', body: JSON.stringify({ session_id: sessionId, is_playing: true }), headers: { 'Content-Type': 'application/json' } });
-        if (state.kicked && relaySession === sessionId) { stop(); setStatus(state.message || 'La emisión ha terminado. Puedes volver a abrir el canal.', true); }
-      } catch { /* A brief network failure does not end playback. */ }
+  video.addEventListener('error', () => { if (active && !pageUnloading) { clearRememberedPlayback(); stop(); setStatus('El navegador no pudo abrir la emisión.', true); } });
+  window.addEventListener('pagehide', () => { pageUnloading = true; stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
+  async function heartbeat() {
+    if (heartbeatPending) return;
+    heartbeatPending = true;
+    const lease = playbackLease;
+    try {
+      if (lease) {
+        const state = await inRoom('ping', { data: { id: lease.id } });
+        if (playbackLease?.id === lease.id) {
+          if (state.kicked) { stop(); setStatus('Esta reproducción ha terminado. Vuelve a entrar en la sala si el acceso ha cambiado.', true); }
+          else playbackLease.expires = state.expires;
+        }
+      }
+    } catch (error) {
+      if (lease && playbackLease?.id === lease.id && (error.status === 403 || error.status === 401 || Date.now() / 1000 >= lease.expires)) {
+        stop(); setStatus('No se pudo renovar el acceso. Vuelve a entrar en la sala.', true);
+      }
+    } finally { heartbeatPending = false; }
+  }
+  const heartbeatInterval = setInterval(heartbeat, 25000);
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      stopConnectionsPolling();
+      return;
     }
+    heartbeat();
     refreshConnections();
-  }, 5000);
-  window.addEventListener('pagehide', () => clearInterval(relayInterval), { once: true });
+    startConnectionsPolling();
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('pagehide', () => {
+    clearInterval(heartbeatInterval);
+    stopConnectionsPolling();
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, { once: true });
+  video.addEventListener('ended', () => { clearRememberedPlayback(); stop(); setStatus('La emisión ha terminado.'); });
+  refreshConnections();
+  startConnectionsPolling();
 
   const modal = $('#upload-modal');
+  const uploadDialog = createDialog(modal, $('#upload-open'), $('#upload-file'));
   const openUpload = (event) => {
     event?.preventDefault?.();
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    try { $('#upload-file')?.focus(); } catch {}
+    uploadDialog.show();
   };
-  const closeUpload = (event) => {
+  const closeUpload = async (event) => {
     event?.preventDefault?.();
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
+    await uploadDialog.hide();
     $('#upload-form').reset();
     $('#upload-status').textContent = '';
-    try { $('#upload-open')?.focus(); } catch {}
   };
   $('#upload-open').addEventListener('click', openUpload);
   $('#upload-close').addEventListener('click', closeUpload);
@@ -531,22 +549,17 @@ function mountPlayer(session) {
     const file = $('#upload-file').files?.[0];
     const status = $('#upload-status');
     const button = $('#upload-submit');
-    if (!file || file.size > 24 * 1024 * 1024) { status.textContent = 'Selecciona un archivo de hasta 24 MB.'; return; }
+    if (!file || !/\.m3u$/i.test(file.name) || file.size > 10 * 1024 * 1024) { status.textContent = 'Selecciona un archivo .m3u de hasta 10 MB.'; return; }
     button.disabled = true;
     try {
       status.textContent = 'Preparando lista…';
       const source = await file.text();
       const parsed = parsePlaylist(source);
       if (!parsed.length) throw new Error('El archivo no contiene canales válidos.');
-      const encrypted = JSON.stringify(await encryptPlaylist(source, await getKey()));
-      const count = Math.ceil(encrypted.length / CHUNK_SIZE);
-      if (count > 64) throw new Error('La lista es demasiado grande.');
-      const batch = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-upload`;
-      for (let index = 0; index < count; index += 1) {
-        status.textContent = `Subiendo lista: ${index + 1} de ${count}…`;
-        await api('chunk', { method: 'POST', query: `&batch=${encodeURIComponent(batch)}&index=${index}`, body: encrypted.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE), headers: { 'Content-Type': 'text/plain' } });
-      }
-      await api('commit', { method: 'POST', body: JSON.stringify({ batch, count }), headers: { 'Content-Type': 'application/json' } });
+      status.textContent = 'Guardando lista y comprobando el límite de conexiones…';
+      const next = await inRoom('upload', { data: { filename: file.name, source, revision: session.revision } });
+      Object.assign(session, next);
+      settings?.refresh(next);
       setPlaylist(parsed);
       status.textContent = 'Lista guardada.';
       uploadMorph.morphTo(Check, 'snappy');
@@ -555,184 +568,34 @@ function mountPlayer(session) {
     finally { button.disabled = false; }
   });
 
-  const usersModal = $('#users-modal');
-  const resetUserForm = () => {
-    $('#user-edit-orig').value = '';
-    $('#user-username').value = '';
-    $('#user-username').disabled = false;
-    $('#user-password').value = '';
-    $('#user-password').required = true;
-    $('#user-password').placeholder = 'Contraseña (mínimo 4 caracteres)';
-    $('#user-password-label').textContent = 'Contraseña';
-    $('#user-form-heading').textContent = 'Crear nuevo acceso';
-    $('#user-submit').textContent = 'Crear acceso';
-    $('#user-cancel-edit').classList.add('hidden');
-    $('#users-status').textContent = '';
-  };
-  const startEditUser = (username) => {
-    $('#user-edit-orig').value = username;
-    $('#user-username').value = username;
-    $('#user-password').value = '';
-    $('#user-password').required = false;
-    $('#user-password').placeholder = 'Nueva contraseña (vacío para no cambiar)';
-    $('#user-password-label').textContent = 'Nueva contraseña (opcional)';
-    $('#user-form-heading').textContent = `Modificar acceso: ${username}`;
-    $('#user-submit').textContent = 'Guardar cambios';
-    $('#user-cancel-edit').classList.remove('hidden');
-    $('#users-status').textContent = '';
-    $('#user-password').focus();
-  };
-  const renderUsers = (users) => {
-    const listEl = $('#users-list');
-    if (!users.length) {
-      listEl.innerHTML = '<p class="py-3 text-center text-sm text-slate-400">No hay accesos registrados.</p>';
-      return;
-    }
-    listEl.innerHTML = users.map((u) => {
-      const isCurrent = u.username === session.username;
-      return `<div class="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-        <div class="flex min-w-0 items-center gap-3">
-          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-amber-400">${iconSvg(Shield, 'h-4 w-4')}</div>
-          <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="truncate text-sm font-semibold text-white">${escapeHtml(u.username)}</span>
-              ${isCurrent ? '<span class="rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">Tú</span>' : ''}
-            </div>
-            <span class="text-xs text-slate-500">${u.created_at ? new Date(u.created_at).toLocaleDateString() : 'Activo'}</span>
-          </div>
-        </div>
-        <div class="flex shrink-0 items-center gap-1">
-          <button type="button" data-edit-user="${escapeHtml(u.username)}" title="Modificar contraseña" aria-label="Modificar acceso de ${escapeHtml(u.username)}" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-amber-400">${iconSvg(Pencil, 'h-4 w-4')}</button>
-          ${isCurrent ? '' : `<button type="button" data-delete-user="${escapeHtml(u.username)}" title="Eliminar usuario" aria-label="Eliminar acceso de ${escapeHtml(u.username)}" class="rounded-lg p-2 text-slate-400 transition hover:bg-red-950/50 hover:text-red-400">${iconSvg(Trash2, 'h-4 w-4')}</button>`}
-        </div>
-      </div>`;
-    }).join('');
-  };
-  const loadUsers = async () => {
-    const listEl = $('#users-list');
-    listEl.innerHTML = '<p class="py-3 text-center text-sm text-slate-400">Cargando accesos…</p>';
-    try {
-      const users = await api('users', { auth: true });
-      renderUsers(users);
-    } catch (err) {
-      listEl.innerHTML = `<p class="py-3 text-center text-sm text-red-400">${escapeHtml(err.message || 'Error al cargar accesos.')}</p>`;
-    }
-  };
-  const openUsers = (event) => {
-    event?.preventDefault?.();
-    usersModal.classList.remove('hidden');
-    usersModal.classList.add('flex');
-    resetUserForm();
-    loadUsers();
-  };
-  const closeUsers = (event) => {
-    event?.preventDefault?.();
-    usersModal.classList.add('hidden');
-    usersModal.classList.remove('flex');
-    resetUserForm();
-    $('#users-status').textContent = '';
-    try { $('#users-open')?.focus(); } catch {}
-  };
-  $('#users-open').addEventListener('click', openUsers);
-  $('#users-close').addEventListener('click', closeUsers);
-  usersModal.addEventListener('click', (event) => { if (event.target === usersModal) closeUsers(event); });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !usersModal.classList.contains('hidden')) closeUsers(event);
-  });
-  app.addEventListener('click', (event) => {
-    if (event.target.closest('#upload-open')) { openUpload(event); return; }
-    if (event.target.closest('#users-open')) { openUsers(event); return; }
-    if (event.target.closest('#upload-close')) { closeUpload(event); return; }
-    if (event.target.closest('#users-close')) { closeUsers(event); return; }
-  });
-  $('#user-cancel-edit').addEventListener('click', resetUserForm);
-  $('#users-list').addEventListener('click', async (event) => {
-    const editBtn = event.target.closest('[data-edit-user]');
-    if (editBtn) {
-      startEditUser(editBtn.dataset.editUser);
-      return;
-    }
-    const deleteBtn = event.target.closest('[data-delete-user]');
-    if (deleteBtn) {
-      const username = deleteBtn.dataset.deleteUser;
-      if (!confirm(`¿Seguro que deseas eliminar el acceso "${username}"?`)) return;
-      deleteBtn.disabled = true;
-      try {
-        await api('delete-user', {
-          auth: true,
-          method: 'POST',
-          body: JSON.stringify({ username }),
-          headers: { 'Content-Type': 'application/json' },
-        });
-        $('#users-status').textContent = `Acceso "${username}" eliminado.`;
-        $('#users-status').className = 'min-h-5 text-xs text-amber-400';
-        await loadUsers();
-      } catch (err) {
-        $('#users-status').textContent = err.message || 'No se pudo eliminar el acceso.';
-        $('#users-status').className = 'min-h-5 text-xs text-red-400';
-        deleteBtn.disabled = false;
-      }
-    }
-  });
-  $('#user-form').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const origUsername = $('#user-edit-orig').value;
-    const username = $('#user-username').value.trim();
-    const password = $('#user-password').value;
-    const submitBtn = $('#user-submit');
-    const status = $('#users-status');
-
-    submitBtn.disabled = true;
-    status.textContent = 'Guardando…';
-    status.className = 'min-h-5 text-xs text-slate-400';
-
-    try {
-      if (origUsername) {
-        await api('update-user', {
-          auth: true,
-          method: 'POST',
-          body: JSON.stringify({
-            username: origUsername,
-            newUsername: username !== origUsername ? username : undefined,
-            password: password || undefined,
-          }),
-          headers: { 'Content-Type': 'application/json' },
-        });
-        status.textContent = 'Acceso actualizado con éxito.';
-        status.className = 'min-h-5 text-xs text-emerald-400';
-        resetUserForm();
-        await loadUsers();
-      } else {
-        await api('create-user', {
-          auth: true,
-          method: 'POST',
-          body: JSON.stringify({ username, password }),
-          headers: { 'Content-Type': 'application/json' },
-        });
-        status.textContent = 'Nuevo acceso creado con éxito.';
-        status.className = 'min-h-5 text-xs text-emerald-400';
-        resetUserForm();
-        await loadUsers();
-      }
-    } catch (err) {
-      status.textContent = err.message || 'Error al guardar el acceso.';
-      status.className = 'min-h-5 text-xs text-red-400';
-    } finally {
-      submitBtn.disabled = false;
-    }
-  });
+  const settings = session.owner ? mountRoomSettings($('.app-shell'), session, $('#settings-open'), {
+    account,
+    onUpdate(next, reload = false) { Object.assign(session, next); $('#current-room-title').textContent = next.title; refreshConnections(); if (reload) loadPlaylist(); },
+    onRevoke() { stop(); refreshConnections(); },
+  }) : null;
+  window.addEventListener('pagehide', () => settings?.destroy(), { once: true });
 
   if (session.hasPlaylist) loadPlaylist();
-  else setStatus('Aún no hay canales. Puedes subir tu lista con el botón inferior.');
+  else setStatus(session.owner ? 'Sube un archivo .m3u para añadir canales.' : 'El propietario todavía no ha subido la lista de esta sala.');
 }
 
-showLogin();
+app.innerHTML = '<main class="app-boot"><span class="loading-dot"></span><p>Cargando…</p></main>';
 (async () => {
+  let config;
   try {
-    const authSession = await api('session', { auth: true });
-    const playlistSession = await api('session');
-    mountPlayer({ ...playlistSession, username: authSession.username });
-  } catch (error) {
-    if (error.status !== 401) showLogin('No se pudo comprobar la sesión.');
+    config = await roomApi('config');
+    if (!config.ready || location.hash.includes('verify=') || location.hash.includes('reset=')) { mountPortal(app, config); return; }
+    const identity = await roomApi('session');
+    const query = new URLSearchParams(location.search);
+    if (identity.account?.needsUsername && !query.has('join')) { mountPortal(app, config, { mode: 'profile' }); return; }
+    const slug = query.get('room');
+    if (slug) {
+      try { const room = await roomApi('room', { room: slug }); mountPlayer(room, identity.account); }
+      catch (error) { if (error.status === 403 || error.status === 404) mountPortal(app, config); else throw error; }
+    } else if (identity.account && !query.has('join')) mountDashboard(app, identity.account);
+    else mountPortal(app, config);
+  } catch {
+    app.innerHTML = '<main class="app-boot"><p>No se pudo conectar con Dorado TV.</p><button class="secondary-button" id="retry-boot">Volver a intentar</button></main>';
+    app.querySelector('#retry-boot').onclick = () => location.reload();
   }
 })();
