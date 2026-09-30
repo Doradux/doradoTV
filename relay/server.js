@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
+import ipaddr from 'ipaddr.js';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { RelayRegistry } from './registry.js';
-import { providerStatus } from './provider.js';
 
-const SESSION_TTL = 25;
+const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
 const STARTUP_TIMEOUT = 35;
 const SEGMENT = /^segment_[0-9]{9,}\.ts$/;
@@ -19,8 +20,62 @@ function sameSecret(given, expected) {
 }
 
 function normalizeUserId(value) {
-  const id = String(value);
-  return /^[1-9]\d*$/.test(id) ? id : null;
+  const id = String(value || '');
+  return /^[a-zA-Z0-9._:-]{1,128}$/.test(id) ? id : null;
+}
+
+function publicAddress(address) {
+  try { return ipaddr.process(address).range() === 'unicast'; } catch { return false; }
+}
+
+async function pinHttpChannel(value, resolver = lookup) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('Canal inválido.'); }
+  if (url.protocol !== 'http:' || url.username || url.password) throw new Error('El relay solo acepta señales HTTP públicas.');
+  const hostname = url.hostname.replace(/^\[|\]$/g, '');
+  const addresses = await Promise.race([
+    resolver(hostname, { all: true }),
+    new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('DNS timeout')), 3000);
+      timer.unref();
+    }),
+  ]);
+  if (!addresses.length || addresses.some(({ address }) => !publicAddress(address))) throw new Error('El canal no apunta a una red pública.');
+  const pinned = new URL(url.href);
+  pinned.hostname = addresses[0].address;
+  return { original: url.href, pinned: pinned.href, host: url.host };
+}
+
+async function inspectHttpTarget(target) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(target.pinned, {
+      method: 'GET',
+      headers: { Host: target.host, 'User-Agent': 'VLC/3.0.18', Range: 'bytes=0-0' },
+    }, (res) => {
+      const result = { status: res.statusCode || 0, location: res.headers.location || null };
+      res.destroy();
+      resolve(result);
+    });
+    req.setTimeout(5000, () => req.destroy(new Error('Provider timeout')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+export async function resolveHttpChannel(value, resolver = lookup, inspect = inspectHttpTarget) {
+  let current = value;
+  for (let redirects = 0; redirects <= 4; redirects += 1) {
+    const target = await pinHttpChannel(current, resolver);
+    const response = await inspect(target);
+    if ([301, 302, 303, 307, 308].includes(response.status) && response.location) {
+      if (redirects === 4) throw new Error('Demasiadas redirecciones del proveedor.');
+      current = new URL(response.location, target.original).href;
+      continue;
+    }
+    if (response.status >= 200 && response.status < 300) return target;
+    throw new Error('El proveedor no acepta la conexión del relay.');
+  }
+  throw new Error('No se pudo resolver la emisión.');
 }
 
 function json(response, status, data, headers = {}) {
@@ -37,7 +92,7 @@ async function body(request) {
   return JSON.parse(content || '{}');
 }
 
-export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnections = 3, ffmpeg = 'ffmpeg', spawnProcess = spawn, clock = () => Math.floor(Date.now() / 1000) }) {
+export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnections = 3, ffmpeg = 'ffmpeg', spawnProcess = spawn, resolveChannel = resolveHttpChannel, clock = () => Math.floor(Date.now() / 1000) }) {
   if (!directory || !secret || !publicUrl || !appOrigin || !Number.isInteger(maxConnections) || maxConnections < 1) throw new Error('Configura DORADO_RELAY_DIR, DORADO_RELAY_SECRET, DORADO_RELAY_PUBLIC_URL, DORADO_APP_ORIGIN y un límite de conexiones válido.');
   const registry = new RelayRegistry(directory);
   const lockFile = join(directory, 'worker.lock');
@@ -54,8 +109,12 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   closeSync(lock);
   const processes = new Map();
   const now = clock;
-  const mediaOrigin = new URL(publicUrl).origin;
-  const getCors = (req) => ({ 'Access-Control-Allow-Origin': req?.headers?.origin || appOrigin, 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin', 'Referrer-Policy': 'no-referrer' });
+  const publicBase = new URL(publicUrl);
+  const publicIsLocal = ['localhost', '127.0.0.1', '::1'].includes(publicBase.hostname);
+  if (publicBase.protocol !== 'https:' && !(publicIsLocal && publicBase.protocol === 'http:')) throw new Error('DORADO_RELAY_PUBLIC_URL debe usar HTTPS.');
+  const mediaOrigin = publicBase.origin;
+  const allowedOrigin = new URL(appOrigin).origin;
+  const getCors = () => ({ 'Access-Control-Allow-Origin': allowedOrigin, 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin', 'Referrer-Policy': 'no-referrer' });
 
   // A restart invalidates all browser sessions and removes stale HLS output.
   registry.transaction((state) => {
@@ -117,7 +176,8 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
         mkdirSync(output, { recursive: true, mode: 0o700 });
         const child = spawnProcess(ffmpeg, [
           '-nostdin', '-hide_banner', '-loglevel', 'error', '-rw_timeout', '15000000', '-user_agent', 'VLC/3.0.18',
-          '-i', emission.url, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+          '-max_redirects', '0', '-headers', `Host: ${emission.host_header}\r\n`, '-i', emission.input_url,
+          '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
           '-f', 'hls', '-hls_time', '4', '-hls_list_size', '6', '-hls_delete_threshold', '2',
           '-hls_flags', 'delete_segments+temp_file', '-hls_segment_filename', join(output, 'segment_%09d.ts'), playlist,
         ], { stdio: 'ignore' });
@@ -146,6 +206,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     }
     const match = url.pathname.match(/^\/media\/([0-9a-f-]{36})\/(index\.m3u8|segment_[0-9]{9,}\.ts)$/);
     if (request.method === 'GET' && match) {
+      if (request.headers.origin && request.headers.origin !== allowedOrigin) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       const [, sessionId, file] = match;
       const emission = touch(sessionId, url.searchParams.get('token'), undefined, true, false);
       if (!emission) { json(response, 410, { error: 'Esta emisión ha terminado.' }, cors); return; }
@@ -170,29 +231,24 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       if (request.method === 'GET' && url.pathname === '/status') {
         const state = registry.transaction((value) => value);
         const active = Object.values(state.emissions).filter((emission) => ['starting', 'running'].includes(emission.status));
-        const provider = await Promise.all(active.map((emission) => providerStatus(emission.url)));
-        const connections = active.map((emission, index) => ({
-          emission_id: emission.id, channel_name: emission.name, status: emission.status, program: provider[index].program,
+        const connections = active.map((emission) => ({
+          emission_id: emission.id, channel_name: emission.name, status: emission.status,
           users: Object.values(state.sessions).filter((session) => session.emission_id === emission.id).map((session) => ({ name: session.name, user_id: session.user_id })),
         }));
-        const count = provider[0]?.connections;
-        const external = count === null || count === undefined ? 0 : Math.max(0, count - connections.length);
-        for (let index = 0; index < external; index += 1) connections.push({ emission_id: null, channel_name: 'Conexión externa', status: 'external', program: null, users: [] });
-        json(response, 200, { max_connections: maxConnections, active_count: count === null || count === undefined ? active.length : Math.max(count, active.length), local_count: active.length, viewer_count: Object.keys(state.sessions).length, external_estimated: count !== null && count !== undefined, connections }); return;
+        json(response, 200, { max_connections: maxConnections, active_count: active.length, local_count: active.length, viewer_count: Object.keys(state.sessions).length, connections }); return;
       }
       if (request.method === 'POST' && url.pathname === '/start') {
         const { channel, user_id: rawUserId, name, tab } = await body(request);
         const userId = normalizeUserId(rawUserId);
-        let parsed;
-        try { parsed = new URL(channel?.url || ''); } catch { throw new Error('Canal inválido.'); }
-        if (!['http:', 'https:'].includes(parsed.protocol) || typeof channel.name !== 'string' || channel.name.length > 200 || !userId || typeof name !== 'string' || name.length > 80 || typeof tab !== 'string' || tab.length > 100) throw new Error('Canal o sesión inválidos.');
+        if (typeof channel?.name !== 'string' || channel.name.length > 200 || !userId || typeof name !== 'string' || name.length > 80 || typeof tab !== 'string' || tab.length > 100) throw new Error('Canal o sesión inválidos.');
+        const target = await resolveChannel(channel.url);
         const result = registry.transaction((state) => {
           for (const [id, session] of Object.entries(state.sessions)) if (session.user_id === userId && session.tab === tab) delete state.sessions[id];
-          const key = createHash('sha256').update(parsed.href).digest('hex');
+          const key = createHash('sha256').update(target.original).digest('hex');
           let emission = Object.values(state.emissions).find((value) => value.key === key && ['starting', 'running'].includes(value.status));
           if (!emission) {
             if (Object.values(state.emissions).filter((value) => ['starting', 'running'].includes(value.status)).length >= maxConnections) return null;
-            emission = { id: randomUUID(), key, url: parsed.href, name: channel.name, status: 'starting', created_at: now(), last_viewer: now() };
+            emission = { id: randomUUID(), key, url: target.original, input_url: target.pinned, host_header: target.host, name: channel.name, status: 'starting', created_at: now(), last_viewer: now() };
             state.emissions[emission.id] = emission;
           }
           const session = { id: randomUUID(), token: randomBytes(32).toString('hex'), emission_id: emission.id, user_id: userId, name, tab, last_seen: now() };

@@ -56,17 +56,17 @@ Las pruebas automatizadas de Google utilizan tokens firmados con claves de prueb
 
 ## Reproducción y conexiones
 
-Las salas nuevas reproducen directamente desde el proveedor. Cada espectador consume normalmente una conexión de origen, incluso si varios ven el mismo canal. La señal debe ser reproducible desde el navegador: HTTPS cuando la app se sirve por HTTPS, CORS compatible y un formato admitido. No se reenvía el vídeo a través de Netlify.
+Las señales HTTPS se reproducen directamente desde el proveedor. Los canales cuya URL es HTTP se envían al [relay persistente](relay/README.md), que los convierte a HLS y los publica mediante HTTPS; Netlify solo controla la sesión y nunca transporta el vídeo. Si el relay no está configurado, los canales HTTP muestran un error de configuración en lugar de intentar mixed content.
 
 La detección consulta la API del proveedor identificado en URLs de tipo `/live/usuario/contraseña/id.ts` o `.m3u8`; no abre emisiones de prueba para descubrir el límite. Solo se aceptan respuestas con un entero positivo. Un error temporal conserva un máximo conocido para esa cuenta. Para una lista con varias cuentas, la configuración de sala usa el menor máximo conocido, y cada cuenta mantiene además su propio contador compartido. Las consultas están acotadas a 8 cuentas por subida, con DNS validado, bloqueo de direcciones privadas, sin redirecciones y límites de tiempo/tamaño.
 
 El límite controla plazas de la app, no las emisiones externas. La caducidad libera conexiones de navegadores desconectados, pero no puede imponer un corte al servidor de origen. El límite configurado menor que el uso actual bloquea nuevas reproducciones hasta que se liberen plazas; no expulsa arbitrariamente a quienes ya estaban viendo.
 
-El [relay persistente anterior](relay/README.md) permanece disponible como componente separado, pero **no está conectado a las nuevas salas**. Integrarlo exige aislar sus emisiones por sala/cuenta y alojarlo en un servidor permanente fuera de Netlify. No se ha reutilizado un relay global para mezclar salas privadas.
+El relay se usa únicamente para señales HTTP y debe alojarse en un servidor permanente fuera de Netlify. El backend de salas le entrega sesiones temporales; el navegador nunca recibe `DORADO_RELAY_SECRET`. Varias personas viendo el mismo canal comparten una entrada FFmpeg. Cada URL y cada redirección se resuelven y validan contra redes privadas antes de abrirse, FFmpeg recibe una IP fijada y no sigue redirecciones por su cuenta.
 
 ## Coste y desarrollo
 
-El almacenamiento y las funciones consumen las cuotas de tu plan Netlify; no se promete uso ilimitado gratuito. El vídeo directo evita que su tráfico consuma el ancho de banda del sitio. El estado de conexiones se consulta solo mientras una vista de sala está activa; las reproducciones mantienen su renovación periódica.
+El almacenamiento y las funciones consumen las cuotas de tu plan Netlify; no se promete uso ilimitado gratuito. Las señales HTTPS directas no consumen ancho de banda de Netlify; las señales HTTP consumen tráfico y CPU del host donde ejecutes el relay. El estado de conexiones se consulta solo mientras una vista de sala está activa; las reproducciones mantienen su renovación periódica.
 
 ```bash
 npm ci
