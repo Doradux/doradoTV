@@ -2,7 +2,21 @@
 
 El relay se usa solo para canales `http://`. Convierte la señal a HLS HTTPS con FFmpeg para evitar mixed content. Las señales HTTPS siguen reproduciéndose directamente.
 
-## Despliegue recomendado: Railway
+## Northflank
+
+Expón el puerto `5300` como HTTP público. Northflank inyecta `NF_HOSTS`, que Dorado TV usa automáticamente para construir la URL HTTPS pública, así que no hace falta definir `DORADO_RELAY_PUBLIC_URL` ni `HOST`.
+
+Variables necesarias:
+
+```text
+DORADO_RELAY_SECRET=<secreto aleatorio largo>
+DORADO_APP_ORIGIN=https://doradotv.netlify.app
+DORADO_MAX_CONNECTIONS=3
+```
+
+En Netlify usa el dominio `*.code.run` generado para ese puerto como `DORADO_RELAY_URL` y configura el mismo `DORADO_RELAY_SECRET`.
+
+## Despliegue alternativo: Railway
 
 El repo incluye `Dockerfile.relay` y `railway.toml`. Railway ejecuta el proceso en infraestructura gestionada, entrega un dominio `*.up.railway.app` con TLS automático y reinicia el servicio si falla.
 

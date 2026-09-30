@@ -11,4 +11,5 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY relay ./relay
 
 ENV NODE_ENV=production
+EXPOSE 5300
 CMD ["npm", "run", "relay"]

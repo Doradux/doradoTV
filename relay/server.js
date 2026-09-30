@@ -295,17 +295,22 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null;
+  const northflankHost = process.env.NF_HOSTS?.split(',').map((value) => value.trim()).find(Boolean) || null;
+  const managedPublicUrl =
+    process.env.RENDER_EXTERNAL_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
+    || (northflankHost ? `https://${northflankHost}` : null);
+  const managedRuntime = !!(northflankHost || process.env.RENDER || process.env.RAILWAY_ENVIRONMENT_ID);
   const relay = createRelay({
     directory: process.env.DORADO_RELAY_DIR || '/tmp/dorado-tv-relay',
     secret: process.env.DORADO_RELAY_SECRET,
-    publicUrl: process.env.DORADO_RELAY_PUBLIC_URL || railwayUrl,
+    publicUrl: process.env.DORADO_RELAY_PUBLIC_URL || managedPublicUrl,
     appOrigin: process.env.DORADO_APP_ORIGIN,
     maxConnections: Number(process.env.DORADO_MAX_CONNECTIONS || 3),
     ffmpeg: process.env.DORADO_FFMPEG || 'ffmpeg',
   });
   const interval = setInterval(relay.tick, 1000);
-  const host = process.env.HOST || (process.env.RAILWAY_ENVIRONMENT_ID ? '0.0.0.0' : '127.0.0.1');
+  const host = process.env.HOST || (managedRuntime ? '0.0.0.0' : '127.0.0.1');
   relay.server.listen(Number(process.env.PORT || 5300), host);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { clearInterval(interval); relay.stop(); relay.server.close(); });
 }
