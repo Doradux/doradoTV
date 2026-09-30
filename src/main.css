@@ -90,11 +90,23 @@
 .relay-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .relay-heading h2 { margin-top: 4px; font-size: 21px; font-weight: 650; letter-spacing: -.5px; }
 .relay-connections { display: flex; flex-direction: column; gap: 6px; }
-.connection-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border: 1px solid #ffffff0a; border-radius: 11px; background: #ffffff03; transition: background .18s, border-color .18s; }
+.connection-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #ffffff0a; border-radius: 11px; background: #ffffff03; transition: background .18s, border-color .18s; }
 .connection-row:hover { background: #ffffff07; border-color: #ffffff14; }
-.connection-info { min-width: 0; flex: 1; }
-.connection-channel { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8dce5; font-size: 12px; font-weight: 550; }
-.connection-user { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; color: #818898; font-size: 10px; }
+.connection-channel-icon { display: grid; place-items: center; width: 42px; height: 42px; overflow: hidden; border: 1px solid #ffffff0d; border-radius: 11px; background: #0a0d13; color: #c1a56d; }
+.connection-channel-icon img { width: 100%; height: 100%; object-fit: contain; }
+.connection-info { min-width: 0; }
+.connection-channel { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8dce5; font-size: 12px; font-weight: 600; }
+.connection-program { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; color: #818898; font-size: 10px; }
+.connection-users { display: flex; align-items: center; justify-content: flex-end; min-width: 32px; isolation: isolate; }
+.connection-avatar { position: relative; display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; margin-left: -10px; border: 2px solid #151922; border-radius: 999px; background: linear-gradient(145deg, #d7ad5d, #8e6b31); color: #15110a; font-size: 11px; font-weight: 750; line-height: 1; opacity: 1; transform: scale(1); z-index: calc(30 - var(--avatar-index)); transition: width .24s var(--ease-out), margin .24s var(--ease-out), opacity .2s, transform .24s var(--ease-spring), border-width .2s; }
+.connection-avatar:first-child { margin-left: 0; }
+.connection-avatar:nth-child(2) { opacity: .85; transform: scale(.95); }
+.connection-avatar:nth-child(3) { opacity: .7; transform: scale(.9); }
+.connection-avatar:nth-child(n+4) { width: 0; margin-left: 0; border-width: 0; opacity: 0; transform: scale(.8); overflow: hidden; pointer-events: none; }
+.connection-users:hover .connection-avatar, .connection-users:focus-within .connection-avatar { width: 32px; margin-left: 6px; border-width: 2px; opacity: 1; transform: scale(1); overflow: visible; pointer-events: auto; }
+.connection-users:hover .connection-avatar:first-child, .connection-users:focus-within .connection-avatar:first-child { margin-left: 0; }
+.connection-avatar::after { content: attr(data-user); position: absolute; left: 50%; bottom: calc(100% + 8px); z-index: 80; padding: 6px 8px; border: 1px solid #ffffff16; border-radius: 7px; background: #090c12f5; color: #f0f2f6; box-shadow: 0 8px 24px #0008; font-size: 10px; font-weight: 500; white-space: nowrap; opacity: 0; pointer-events: none; transform: translate(-50%, 4px); transition: opacity .16s, transform .16s; }
+.connection-avatar:hover::after, .connection-avatar:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
 .connection-close { display: inline-flex; align-items: center; justify-content: center; padding: 5px 11px; border: 1px solid #ffffff12; border-radius: 7px; color: #e58787; background: #ff55550a; font-size: 11px; font-weight: 500; transition: color .18s, background .18s, border-color .18s, transform .25s var(--ease-spring); }
 .connection-close:hover { color: #ffa8a8; border-color: #e5878740; background: #ff555518; }
 .connection-close:active { transform: scale(.94); }

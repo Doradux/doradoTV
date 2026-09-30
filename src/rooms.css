@@ -198,10 +198,6 @@
 .confirmation-box { border: 1px solid #e9c47735; border-radius: 12px; padding: 14px; margin-top: 18px; background: #e9c47706; }
 .confirmation-box p { color: #d2c3a4; font-size: 12px; line-height: 1.8; }
 .confirmation-box > div { display: flex; gap: 10px; margin-top: 12px; }
-.connection-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 12px; border: 1px solid #ffffff0d; border-radius: 12px; background: #080b124d; }
-.connection-row > div { display: grid; gap: 5px; min-width: 0; }
-.connection-row strong { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.connection-row span { color: #929baa; font-size: 11px; }
 #settings-open:hover { transform: translateY(-3px); }
 #custom-limit { margin-top: 10px; }
 @media (max-width: 900px) {

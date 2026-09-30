@@ -60,7 +60,7 @@ function mountPlayer(session, account) {
           </div>
         </div>
         <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p></div></div>
-        <section id="relay-panel" class="${session.owner ? '' : 'hidden'} relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><span id="relay-count" class="channel-count"></span></div><div id="relay-connections" class="relay-connections"></div></section>
+        <section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><span id="relay-count" class="channel-count"></span></div><div id="relay-connections" class="relay-connections"></div></section>
       </section>
       <aside class="channel-panel" aria-label="Canales">
         <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">LISTA DE CANALES</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
@@ -175,22 +175,43 @@ function mountPlayer(session, account) {
     setLoading(false);
     setPlayIcon(false);
   }
+  function connectionInitial(name) {
+    return String(name || 'Invitado').trim().charAt(0).toLocaleUpperCase('es') || 'I';
+  }
   function refreshConnections() {
-    if (!session.owner || document.hidden) return Promise.resolve();
+    if (document.hidden) return Promise.resolve();
     if (connectionsRefreshPromise) return connectionsRefreshPromise;
     connectionsRefreshPromise = (async () => {
       try {
         const data = await inRoom('status');
         $('#relay-count').textContent = `${data.active} / ${data.limit ?? '∞'} conexiones`;
-        $('#relay-connections').innerHTML = data.connections.length ? data.connections.map((connection) => `
-          <div class="connection-row">
-            <div class="connection-info">
-              <span class="connection-channel">${escapeHtml(connection.channelName)}</span>
-              <span class="connection-user">${escapeHtml(connection.name)}</span>
+        const grouped = new Map();
+        for (const connection of data.connections) {
+          const key = String(connection.channelId ?? connection.channelName);
+          if (!grouped.has(key)) grouped.set(key, { ...connection, users: [] });
+          grouped.get(key).users.push(connection);
+        }
+        $('#relay-connections').innerHTML = grouped.size ? [...grouped.values()].map((connection) => {
+          const closeIds = connection.users.map((user) => user.id).filter(Boolean);
+          const avatars = connection.users.map((user, index) => `
+            <span class="connection-avatar" style="--avatar-index: ${index}" data-user="${escapeHtml(user.name || 'Invitado')}" aria-label="${escapeHtml(user.name || 'Invitado')}" tabindex="0">
+              ${escapeHtml(connectionInitial(user.name))}
+            </span>
+          `).join('');
+          return `
+            <div class="connection-row">
+              <div class="connection-channel-icon">
+                ${connection.channelLogo ? `<img src="${escapeHtml(connection.channelLogo)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : iconSvg(TvMinimal, 'h-5 w-5')}
+              </div>
+              <div class="connection-info">
+                <span class="connection-channel">${escapeHtml(connection.channelName)}</span>
+                <span class="connection-program">${escapeHtml(connection.program || 'En directo')}</span>
+              </div>
+              <div class="connection-users" aria-label="${connection.users.length} usuarios viendo este canal">${avatars}</div>
+              ${session.owner && closeIds.length ? `<button type="button" data-close-emissions="${closeIds.join(',')}" class="connection-close">Cerrar</button>` : ''}
             </div>
-            <button type="button" data-close-emission="${escapeHtml(connection.id)}" class="connection-close">Cerrar</button>
-          </div>
-        `).join('') : `<div class="connection-empty">${iconSvg(Radio, 'h-4 w-4')}<span>Nadie está reproduciendo ahora.</span></div>`;
+          `;
+        }).join('') : `<div class="connection-empty">${iconSvg(Radio, 'h-4 w-4')}<span>Nadie está reproduciendo ahora.</span></div>`;
       } catch {
         $('#relay-count').textContent = 'Sin conexión';
       } finally {
@@ -205,7 +226,7 @@ function mountPlayer(session, account) {
   }
   function startConnectionsPolling() {
     stopConnectionsPolling();
-    if (!session.owner || document.hidden) return;
+    if (document.hidden) return;
     connectionsRefreshTimer = setTimeout(async () => {
       await refreshConnections();
       startConnectionsPolling();
@@ -337,11 +358,12 @@ function mountPlayer(session, account) {
   $('#more').addEventListener('click', () => { visible += 80; renderChannels(); });
   $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
   $('#relay-connections').addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-close-emission]');
+    const button = event.target.closest('[data-close-emissions]');
     if (!button) return;
     button.disabled = true;
     try {
-      await inRoom('close', { data: { id: button.dataset.closeEmission } });
+      const ids = button.dataset.closeEmissions.split(',').filter(Boolean);
+      await Promise.all(ids.map((id) => inRoom('close', { data: { id } })));
       await refreshConnections();
     } catch (error) { setStatus(error.message, true); button.disabled = false; }
   });
