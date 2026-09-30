@@ -14,7 +14,7 @@ export const validEmail = (value) => value.length <= 254 && /^[^\s@]+@[^\s@]+\.[
 export function validatePassword(value) {
   if (typeof value !== 'string' || value.length < 10 || value.length > 128) throw new RoomError('La contraseña debe tener entre 10 y 128 caracteres.');
 }
-export const accountView = (account) => account ? { id: account.id, username: account.username || account.name, name: account.username || account.name, email: account.email, legacy: !!account.legacy, google: !!account.googleSub, needsUsername: !!account.googleSub && !validUsername(account.username) } : null;
+export const accountView = (account) => account ? { id: account.id, username: account.username || account.name, name: account.username || account.name, email: account.email, google: !!account.googleSub, needsUsername: !!account.googleSub && !validUsername(account.username) } : null;
 export function roomView(room, account) {
   return { slug: room.slug, title: room.title, owner: room.ownerId === account?.id, hasPlaylist: !!room.playlist,
     channelCount: room.channelCount || 0, limit: room.limit, detectedMaximum: room.detectedMaximum,

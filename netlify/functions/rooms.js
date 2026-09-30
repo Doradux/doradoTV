@@ -13,7 +13,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
         let ready = true; try { masterKey(env); } catch { ready = false; }
         return json({ ready, registration: ready && mailReady(env) && !!env.TURNSTILE_SITE_KEY && !!env.TURNSTILE_SECRET_KEY,
           googleClientId: ready ? googleClientId(env) : null,
-          siteKey: env.TURNSTILE_SITE_KEY || null, maxFileBytes: 10 * 1024 * 1024, legacy: env.DORADO_ENABLE_LEGACY_LOGIN === 'true' });
+          siteKey: env.TURNSTILE_SITE_KEY || null, maxFileBytes: 10 * 1024 * 1024 });
       }
       masterKey(env);
       const store = getStore();
@@ -105,13 +105,9 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       if (action === 'create') { await rateLimit(store, `create:${who.account?.id || ip}`, 8, 3600, clock?.()); return json(await service.create(who.account, input), 201); }
       if (action === 'update') return json(await service.update(slug, who, input));
       if (action === 'delete') { await service.remove(slug, who, input.revision); return json({ ok: true }); }
-      if (action === 'upload' || action === 'import-legacy') {
+      if (action === 'upload') {
         await service.access(slug, who, true);
         await rateLimit(store, `upload:${who.account.id}`, 12, 3600, clock?.());
-        if (action === 'import-legacy') {
-          if (!who.account.legacy || env.DORADO_ENABLE_LEGACY_LOGIN !== 'true') throw new RoomError('Importación no disponible.', 403);
-          const { legacyPlaylist } = await import('../lib/legacy-rooms.js'); input.source = await legacyPlaylist(); input.filename = 'legacy.m3u';
-        }
         return json(await service.upload(slug, who, input));
       }
       if (action === 'start') { await rateLimit(store, `start:${who.sessionId || ip}`, 120, 300, clock?.()); return json(await service.start(slug, who, input)); }
@@ -119,7 +115,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       throw new RoomError('Ruta no encontrada.', 404);
     } catch (error) {
       if (error instanceof RoomError) return json({ error: error.message, ...error.details }, error.status);
-      // Never return SMTP credentials, provider URLs or database errors to the browser.
+      // Never return SMTP credentials or provider URLs to the browser.
       return json({ error: 'No se pudo completar la operación. Inténtalo de nuevo en unos minutos.' }, 503);
     }
   };

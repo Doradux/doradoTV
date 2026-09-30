@@ -1,6 +1,22 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { RoomError, mutate, read } from './room-store.js';
-export { hashPassword, verifyPassword } from './auth.js';
+
+const scrypt = promisify(scryptCallback);
+export async function hashPassword(password) {
+  if (typeof password !== 'string' || !password || password.length > 1024) throw new RoomError('Contraseña inválida.');
+  const salt = randomBytes(32);
+  const hash = await scrypt(password, salt, 64);
+  return `scrypt:${salt.toString('hex')}:${hash.toString('hex')}`;
+}
+export async function verifyPassword(password, encoded) {
+  if (typeof password !== 'string' || password.length > 1024 || typeof encoded !== 'string') return false;
+  const [algorithm, saltHex, hashHex] = encoded.split(':');
+  if (algorithm !== 'scrypt' || !/^[a-f0-9]{64}$/.test(saltHex || '') || !/^[a-f0-9]{128}$/.test(hashHex || '')) return false;
+  const expected = Buffer.from(hashHex, 'hex');
+  const actual = await scrypt(password, Buffer.from(saltHex, 'hex'), expected.length);
+  return timingSafeEqual(actual, expected);
+}
 export const digest = (value) => createHash('sha256').update(value).digest('hex');
 export const secretToken = () => randomBytes(32).toString('hex');
 export const nowSeconds = () => Math.floor(Date.now() / 1000);
