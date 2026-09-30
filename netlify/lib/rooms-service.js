@@ -5,6 +5,9 @@ import { hashPassword, verifyPassword, digest, secretToken, seal, unseal, newSes
 import { detectProviders, channelProvider, currentProgram } from './room-provider.js';
 
 export const MAX_PLAYLIST_BYTES = 10 * 1024 * 1024;
+export const UPLOAD_CHUNK_CHARS = 512 * 1024;
+export const MAX_UPLOAD_CHUNKS = 24;
+export const UPLOAD_TTL_SECONDS = 10 * 60;
 export const LEASE_SECONDS = 90;
 export const normalizeRoom = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 export const validRoom = (value) => /^[a-z0-9][a-z0-9-]{2,39}$/.test(value);
@@ -218,6 +221,49 @@ export class RoomsService {
     });
     if (next.version !== old.version) await this.clearRoomLeases(old);
     return roomView(next, who.account);
+  }
+  async beginUpload(slug, who, { filename, revision, bytes, totalChunks }) {
+    const room = await this.access(slug, who, true);
+    if (typeof filename !== 'string' || !/\.m3u$/i.test(filename)) throw new RoomError('Selecciona un archivo .m3u.');
+    if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_PLAYLIST_BYTES) throw new RoomError('La lista debe ocupar como máximo 10 MB.');
+    if (!Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > MAX_UPLOAD_CHUNKS) throw new RoomError('La lista necesita demasiados bloques.');
+    if (room.revision !== revision) throw new RoomError('La sala ha cambiado. Actualiza antes de subir la lista.', 409);
+    const id = randomUUID();
+    await this.store.setJSON(`upload/${slug}`, {
+      id, ownerId: who.account.id, filename, revision, bytes, totalChunks,
+      expires: this.clock() + UPLOAD_TTL_SECONDS,
+    });
+    return { id };
+  }
+  async uploadChunk(slug, who, { id, index, chunk }) {
+    await this.access(slug, who, true);
+    const state = await read(this.store, `upload/${slug}`);
+    if (!state || state.id !== id || state.ownerId !== who.account.id || state.expires <= this.clock()) {
+      throw new RoomError('La subida ha caducado. Vuelve a seleccionar el archivo.', 409);
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= state.totalChunks) throw new RoomError('Bloque de subida inválido.');
+    if (typeof chunk !== 'string' || chunk.length > UPLOAD_CHUNK_CHARS) throw new RoomError('Bloque de subida demasiado grande.', 413);
+    await this.store.setJSON(`upload/${slug}/${index}`, { id, chunk });
+    return { ok: true };
+  }
+  async commitUpload(slug, who, { id }) {
+    await this.access(slug, who, true);
+    const state = await read(this.store, `upload/${slug}`);
+    if (!state || state.id !== id || state.ownerId !== who.account.id || state.expires <= this.clock()) {
+      throw new RoomError('La subida ha caducado. Vuelve a seleccionar el archivo.', 409);
+    }
+    const keys = Array.from({ length: state.totalChunks }, (_, index) => `upload/${slug}/${index}`);
+    try {
+      const chunks = await Promise.all(keys.map((key) => read(this.store, key)));
+      if (chunks.some((item) => !item || item.id !== id || typeof item.chunk !== 'string')) {
+        throw new RoomError('Falta una parte del archivo. Vuelve a intentar la subida.', 409);
+      }
+      const source = chunks.map((item) => item.chunk).join('');
+      if (Buffer.byteLength(source) > MAX_PLAYLIST_BYTES) throw new RoomError('La lista debe ocupar como máximo 10 MB.');
+      return await this.upload(slug, who, { filename: state.filename, source, revision: state.revision });
+    } finally {
+      await Promise.all([this.store.delete(`upload/${slug}`), ...keys.map((key) => this.store.delete(key))]);
+    }
   }
   async upload(slug, who, { filename, source, revision }) {
     const old = await this.access(slug, who, true);

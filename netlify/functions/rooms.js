@@ -34,7 +34,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       }
       if (request.method !== 'POST') throw new RoomError('Método no permitido.', 405);
       requireOrigin(request);
-      const input = await boundedJson(request, action === 'upload' ? 14 * 1024 * 1024 : 16_384);
+      const input = await boundedJson(request, action === 'upload-chunk' ? 4 * 1024 * 1024 : 16_384);
       const slug = normalizeRoom(input.room);
       const ip = context.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
       if (['register', 'recover', 'login', 'join', 'verify', 'google-login'].includes(action)) {
@@ -105,11 +105,12 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       if (action === 'create') { await rateLimit(store, `create:${who.account?.id || ip}`, 8, 3600, clock?.()); return json(await service.create(who.account, input), 201); }
       if (action === 'update') return json(await service.update(slug, who, input));
       if (action === 'delete') { await service.remove(slug, who, input.revision); return json({ ok: true }); }
-      if (action === 'upload') {
-        await service.access(slug, who, true);
-        await rateLimit(store, `upload:${who.account.id}`, 12, 3600, clock?.());
-        return json(await service.upload(slug, who, input));
+      if (action === 'upload-begin') {
+        await rateLimit(store, `upload:${who.account?.id || ip}`, 12, 3600, clock?.());
+        return json(await service.beginUpload(slug, who, input));
       }
+      if (action === 'upload-chunk') return json(await service.uploadChunk(slug, who, input));
+      if (action === 'upload-commit') return json(await service.commitUpload(slug, who, input));
       if (action === 'start') { await rateLimit(store, `start:${who.sessionId || ip}`, 120, 300, clock?.()); return json(await service.start(slug, who, input)); }
       if (['ping', 'release', 'close'].includes(action)) return json(await service.playback(slug, who, input, action));
       throw new RoomError('Ruta no encontrada.', 404);

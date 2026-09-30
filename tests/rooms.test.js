@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RoomsService, LEASE_SECONDS } from '../netlify/lib/rooms-service.js';
+import { RoomsService, LEASE_SECONDS, UPLOAD_CHUNK_CHARS } from '../netlify/lib/rooms-service.js';
 import { read } from '../netlify/lib/room-store.js';
 import { digest, identity, cookie, ACCOUNT_COOKIE, GUEST_COOKIE, seal, unseal, checkCaptcha } from '../netlify/lib/room-security.js';
 import { channelProvider, currentProgram, detectProviders, publicAddress } from '../netlify/lib/room-provider.js';
@@ -93,6 +93,41 @@ test('invalid uploads preserve the previous list and stale updates cannot overwr
   assert.equal(f.service.playlist(await f.service.access(current.slug, who)), playlist);
   await assert.rejects(f.service.update(current.slug, who, { limit: 4, revision: current.revision }));
   await assert.rejects(f.service.update(current.slug, who, { limit: null, revision: current.revision }));
+});
+
+test('chunked uploads reassemble the playlist and incomplete uploads preserve the current list', async () => {
+  const f = fixture(), who = await owner(f);
+  const created = await f.service.create(who.account, { slug: 'sala-casa', title: 'Mi sala', password });
+  const split = Math.ceil(playlist.length / 2);
+  const begin = await f.service.beginUpload(created.slug, who, {
+    filename: 'canales.m3u',
+    revision: created.revision,
+    bytes: Buffer.byteLength(playlist),
+    totalChunks: 2,
+  });
+  await f.service.uploadChunk(created.slug, who, { id: begin.id, index: 0, chunk: playlist.slice(0, split) });
+  await f.service.uploadChunk(created.slug, who, { id: begin.id, index: 1, chunk: playlist.slice(split) });
+  const uploaded = await f.service.commitUpload(created.slug, who, { id: begin.id });
+  assert.equal(f.service.playlist(await f.service.access(created.slug, who)), playlist);
+  assert.equal(await read(f.store, `upload/${created.slug}`), null);
+
+  const replacement = playlist.replace('Canal uno', 'Canal cambiado');
+  const incomplete = await f.service.beginUpload(created.slug, who, {
+    filename: 'canales.m3u',
+    revision: uploaded.revision,
+    bytes: Buffer.byteLength(replacement),
+    totalChunks: 2,
+  });
+  await f.service.uploadChunk(created.slug, who, { id: incomplete.id, index: 0, chunk: replacement.slice(0, split) });
+  await assert.rejects(f.service.commitUpload(created.slug, who, { id: incomplete.id }), { status: 409 });
+  assert.equal(f.service.playlist(await f.service.access(created.slug, who)), playlist);
+  const oversized = await f.service.beginUpload(created.slug, who, {
+    filename: 'canales.m3u', revision: uploaded.revision, bytes: 1, totalChunks: 1,
+  });
+  await assert.rejects(
+    f.service.uploadChunk(created.slug, who, { id: oversized.id, index: 0, chunk: 'x'.repeat(UPLOAD_CHUNK_CHARS + 1) }),
+    { status: 413 },
+  );
 });
 
 test('one simultaneous viewer wins the last slot; expired leases release capacity', async () => {
