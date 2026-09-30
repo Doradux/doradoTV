@@ -249,6 +249,11 @@ button:disabled { cursor: not-allowed; }
 @keyframes icon-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 @keyframes ambient-breathe { from { opacity: .5; transform: scale(.85) translate(-8%, 0); } to { opacity: 1; transform: scale(1.15) translate(8%, -5%); } }
 @media (max-width: 639px) {
+  #volume { width: clamp(90px, 28vw, 128px); height: 32px; }
+  #volume::-webkit-slider-runnable-track { height: 6px; }
+  #volume::-moz-range-track { height: 6px; }
+  #volume::-webkit-slider-thumb { width: 16px; height: 16px; margin-top: -5px; }
+  #volume::-moz-range-thumb { width: 16px; height: 16px; }
   .select-option { min-height: 44px; }
   .channel-panel, .relay-panel { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
   .relay-panel { border-radius: 14px; padding: 16px 14px; }
