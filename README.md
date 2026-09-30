@@ -5,7 +5,6 @@ Salas privadas de televisión para compartir con amigos. Los invitados entran co
 ## Qué incluye
 
 - Acceso con Google para propietarios: al entrar por primera vez se elige un nombre de usuario único. No requiere SMTP, una contraseña de Dorado TV ni Turnstile. Los invitados siguen usando sala y contraseña.
-- El acceso anterior por contraseña se conserva. El registro y la recuperación por correo requieren SMTP y Turnstile; sus enlaces son de un solo uso y caducan a los 30 minutos.
 - Límites persistentes de solicitudes en ambos métodos; Turnstile, si se configura, añade una comprobación tras intentos fallidos de acceso por contraseña.
 - Hasta 3 salas por propietario, cada una con título, nombre único, contraseña independiente y una lista `.m3u` de hasta 10 MB.
 - Invitados con sesiones de 7 días y acceso solo a la sala autenticada. El propietario puede cambiar la contraseña, revocar accesos, cerrar reproducciones o eliminar la sala.
@@ -15,7 +14,7 @@ Salas privadas de televisión para compartir con amigos. Los invitados entran co
 
 ## Almacenamiento y privacidad
 
-Las salas nuevas **no necesitan Netlify Database ni otro proveedor de base de datos**. Usan un almacén persistente de Netlify Blobs, `dorado-rooms-v1`, con registros separados para cuentas, salas, sesiones, verificaciones y reservas. Las vistas previas usan otro almacén para no modificar los datos de producción.
+Dorado TV **no necesita Netlify Database ni otro proveedor SQL**. Usa un almacén persistente de Netlify Blobs, `dorado-rooms-v1`, con registros separados para cuentas, salas, sesiones, verificaciones y reservas. Las vistas previas usan otro almacén para no modificar los datos de producción.
 
 La M3U se envía por HTTPS a una función, se valida en el servidor y se cifra con AES-256-GCM antes de persistirla. El cifrado está vinculado a la sala; la clave maestra se guarda en una variable privada de entorno, nunca en el código ni en el navegador. Esta versión cambia el cifrado exclusivamente en navegador del sistema anterior para poder validar las subidas y consultar límites desde el servidor.
 
@@ -23,7 +22,7 @@ Las contraseñas se guardan con scrypt y una sal aleatoria. Los tokens se guarda
 
 Google se valida en el servidor con sus claves públicas y la librería `jose`: firma RS256, emisor, destinatario, caducidad y nonce vinculado al navegador. Cada intento tiene una cookie HttpOnly de 10 minutos y solo se puede completar una vez. La sesión posterior es propia de Dorado TV. No se guarda el token de Google ni se solicita acceso a Gmail, Drive u otras APIs.
 
-Las cuentas de Google se identifican por su `sub`, no por su correo. Un cambio de correo conserva la cuenta y sus salas. No se fusionan automáticamente con cuentas antiguas aunque coincida el correo: para acceder a las salas anteriores hay que usar el método anterior. El correo de una cuenta de Google externa a Gmail/Workspace no se usa como prueba de propiedad de otra cuenta ni como mecanismo de recuperación de esta identidad.
+Las cuentas de Google se identifican por su `sub`, no por su correo. Un cambio de correo conserva la cuenta y sus salas. No se fusionan automáticamente con otras cuentas aunque coincida el correo. El correo de una cuenta de Google externa a Gmail/Workspace no se usa como prueba de propiedad de otra cuenta ni como mecanismo de recuperación de esta identidad.
 
 En reproducción directa, las URLs de los canales llegan al navegador de los invitados autorizados. La app no puede impedir que esas URLs se utilicen fuera de ella ni controlar conexiones externas al proveedor. Cambiar la contraseña revoca el acceso a la app; el reproductor detiene una emisión al detectar la revocación en su siguiente renovación. El nombre y contraseña compartidos tampoco permiten identificar individualmente a cada invitado.
 
@@ -49,22 +48,11 @@ Si deseas habilitar también el registro y la recuperación por correo, configur
 - Un widget de Cloudflare Turnstile para el hostname de la app: `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY`.
 - Una cuenta Gmail dedicada con verificación en dos pasos y contraseña de aplicación: `SMTP_USER` y `SMTP_PASSWORD`. Por defecto se usa `smtp.gmail.com:465` con TLS; otro servidor puede usar `SMTP_HOST` y `SMTP_PORT` (587 usa STARTTLS).
 
-Sin clave de cifrado, las salas están desactivadas. Con `GOOGLE_CLIENT_ID`, el acceso de Google funciona independientemente de la configuración de correo y CAPTCHA. Sin SMTP/Turnstile, solo permanecen desactivados el registro y la recuperación **por correo**. El botón «Entrar con contraseña» conserva el acceso a cuentas anteriores. No se usan credenciales de prueba ni se omite la validación de Google en producción.
+Sin clave de cifrado, las salas están desactivadas. Con `GOOGLE_CLIENT_ID`, el acceso de Google funciona independientemente de la configuración de correo y CAPTCHA. Sin SMTP/Turnstile, solo permanecen desactivados el registro y la recuperación **por correo**. No se usan credenciales de prueba ni se omite la validación de Google en producción.
 
 Configurar Google no restringe el alta a tus amigos: cualquier cuenta de Google que pueda autorizar el cliente puede registrarse. Se aplican límites de solicitudes y el máximo de tres salas por cuenta. No hay todavía un sistema de invitaciones para crear cuentas.
 
 Las pruebas automatizadas de Google utilizan tokens firmados con claves de prueba y un almacén aislado; no completan el consentimiento de una cuenta real. Es necesario comprobar ese último paso desde un origen autorizado en tu consola de Google. No se ha enviado correo real ni se han creado recursos externos durante las pruebas automatizadas.
-
-## Migrar la instalación anterior
-
-La migración es opcional y no borra los datos previos:
-
-1. Mantén temporalmente la conexión de Netlify Database existente y activa `DORADO_ENABLE_LEGACY_LOGIN=true`.
-2. En **Mis salas**, inicia sesión con tu antiguo nombre de usuario y contraseña. Se copia únicamente esa cuenta a Blobs; los siguientes accesos de ese usuario ya se verifican allí.
-3. Crea una sala con su propia contraseña. En **Ajustes de la sala**, pulsa **Importar mi lista anterior**. La lista antigua se lee, se valida con los límites nuevos y se vuelve a cifrar para esa sala. Si supera 10 MB, prepara una M3U más pequeña.
-4. Verifica que todo funciona antes de retirar cualquier dato SQL. Desactivar la opción de acceso anterior deshabilita el login por nombre de usuario; conserva esa opción mientras uses cuentas migradas sin correo. Las cuentas nuevas con correo funcionan siempre en Blobs.
-
-Los archivos y endpoints antiguos se conservan para esta transición y para el relay anterior. No son el backend de las salas nuevas. El script `npm run admin:create -- <usuario>` sigue destinado exclusivamente al sistema SQL antiguo.
 
 ## Reproducción y conexiones
 
@@ -78,7 +66,7 @@ El [relay persistente anterior](relay/README.md) permanece disponible como compo
 
 ## Coste y desarrollo
 
-El almacenamiento y las funciones consumen las cuotas de tu plan Netlify; no se promete uso ilimitado gratuito. El vídeo directo evita que su tráfico consuma el ancho de banda del sitio. El estado de conexiones se consulta solo en las vistas activas del propietario; las reproducciones mantienen su renovación periódica.
+El almacenamiento y las funciones consumen las cuotas de tu plan Netlify; no se promete uso ilimitado gratuito. El vídeo directo evita que su tráfico consuma el ancho de banda del sitio. El estado de conexiones se consulta solo mientras una vista de sala está activa; las reproducciones mantienen su renovación periódica.
 
 ```bash
 npm ci

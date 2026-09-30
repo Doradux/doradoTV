@@ -591,8 +591,7 @@ function mountPlayer(session, account) {
   });
 
   const settings = session.owner ? mountRoomSettings($('.app-shell'), session, $('#settings-open'), {
-    account,
-    onUpdate(next, reload = false) { Object.assign(session, next); $('#current-room-title').textContent = next.title; refreshConnections(); if (reload) loadPlaylist(); },
+    onUpdate(next) { Object.assign(session, next); $('#current-room-title').textContent = next.title; refreshConnections(); },
     onRevoke() { stop(); refreshConnections(); },
   }) : null;
   window.addEventListener('pagehide', () => settings?.destroy(), { once: true });
