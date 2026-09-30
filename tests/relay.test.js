@@ -170,8 +170,12 @@ test('one upstream serves two viewers and closing it revokes both media tokens',
     const third = await (await control('/start', { channel, user_id: 1, name: 'Ana', tab: 'one' })).json();
     const thirdMedia = third.playlist_url.replace('https://relay-test.code.run', base);
     assert.equal((await fetch(thirdMedia)).status, 200);
+    now += 50;
+    assert.equal((await fetch(thirdMedia)).status, 200);
+    now += 50;
+    assert.equal((await fetch(thirdMedia)).status, 200, 'active HLS traffic renews the media session');
     now += 61;
-    assert.equal((await fetch(thirdMedia)).status, 410, 'the media token needs an authenticated heartbeat');
+    assert.equal((await fetch(thirdMedia)).status, 410, 'an inactive media token still expires');
   } finally {
     relay.stop();
     await new Promise((resolve) => relay.server.close(resolve));

@@ -204,6 +204,17 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
           '-hls_flags', 'delete_segments+temp_file', '-hls_segment_filename', join(output, 'segment_%09d.ts'), playlist,
         ], { stdio: 'ignore' });
         child.on('error', () => { registry.transaction((value) => { if (value.emissions[id]) value.emissions[id].status = 'failed'; }); });
+        child.on('close', (code, signal) => {
+          let unexpected = false;
+          registry.transaction((value) => {
+            const current = value.emissions[id];
+            if (current && ['starting', 'running'].includes(current.status)) {
+              current.status = 'failed';
+              unexpected = true;
+            }
+          });
+          if (unexpected) console.warn(`[relay] FFmpeg terminó inesperadamente emission=${id} code=${code ?? 'null'} signal=${signal || 'none'}`);
+        });
         processes.set(id, child);
         registry.transaction((value) => { if (value.emissions[id]) value.emissions[id].pid = child.pid || null; });
       }
@@ -244,7 +255,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     if (request.method === 'GET' && match) {
       if (request.headers.origin && request.headers.origin !== allowedOrigin) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       const [, sessionId, file] = match;
-      const emission = touch(sessionId, url.searchParams.get('token'), undefined, true, false);
+      const emission = touch(sessionId, url.searchParams.get('token'), undefined, true, true);
       if (!emission) { json(response, 410, { error: 'Esta emisión ha terminado.' }, cors); return; }
       const path = join(directory, emission.id, file);
       if (!existsSync(path)) { json(response, 503, { error: 'Preparando emisión.' }, { ...cors, 'Retry-After': '1' }); return; }

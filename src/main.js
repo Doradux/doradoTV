@@ -97,6 +97,7 @@ function mountPlayer(session, account) {
   let filtered = [];
   let active = null;
   let hls = null;
+  let hlsRecoveryAttempts = 0;
   let ts = null;
   let visible = 80;
   let onlyFavorites = false;
@@ -169,6 +170,7 @@ function mountPlayer(session, account) {
     ambient.reset();
     video.pause();
     if (hls) { hls.destroy(); hls = null; }
+    hlsRecoveryAttempts = 0;
     if (ts) { ts.pause(); ts.unload(); ts.detachMediaElement(); ts.destroy(); ts = null; }
     video.removeAttribute('src');
     video.load();
@@ -315,7 +317,27 @@ function mountPlayer(session, account) {
             instance.loadSource(source);
           });
           if (token !== playbackToken || hls !== instance) return;
-          instance.on(Hls.Events.ERROR, (_event, data) => { if (!pageUnloading && data.fatal && token === playbackToken) { clearRememberedPlayback(); stop(); setStatus('No se pudo reproducir el canal. Comprueba la señal.', true); } });
+          instance.on(Hls.Events.FRAG_BUFFERED, () => { hlsRecoveryAttempts = 0; });
+          instance.on(Hls.Events.ERROR, (_event, data) => {
+            if (pageUnloading || !data.fatal || token !== playbackToken || hls !== instance) return;
+            if (hlsRecoveryAttempts < 2 && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hlsRecoveryAttempts += 1;
+              setLoading(true);
+              setStatus('Recuperando la señal…');
+              instance.recoverMediaError();
+              return;
+            }
+            if (hlsRecoveryAttempts < 2 && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hlsRecoveryAttempts += 1;
+              setLoading(true);
+              setStatus('Reconectando con la señal…');
+              instance.startLoad();
+              return;
+            }
+            clearRememberedPlayback();
+            stop();
+            setStatus('No se pudo reproducir el canal. Comprueba la señal.', true);
+          });
         }
       } else if (path.endsWith('.ts')) {
         const { default: mpegts } = await import('mpegts.js');
@@ -524,7 +546,13 @@ function mountPlayer(session, account) {
   video.addEventListener('pause', () => setPlayIcon(false));
   video.addEventListener('waiting', () => setLoading(true));
   video.addEventListener('playing', () => setLoading(false));
-  video.addEventListener('error', () => { if (active && !pageUnloading) { clearRememberedPlayback(); stop(); setStatus('El navegador no pudo abrir la emisión.', true); } });
+  video.addEventListener('error', () => {
+    if (!active || pageUnloading) return;
+    if (hls) return;
+    clearRememberedPlayback();
+    stop();
+    setStatus('El navegador no pudo abrir la emisión.', true);
+  });
   window.addEventListener('pagehide', () => { pageUnloading = true; stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
   async function heartbeat() {
     if (heartbeatPending) return;
