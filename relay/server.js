@@ -225,9 +225,9 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       }
       return;
     }
+    if (request.method === 'GET' && url.pathname === '/health') { json(response, 200, { ok: true }); return; }
     if (!sameSecret(request.headers.authorization?.replace(/^Bearer /, ''), secret)) { json(response, 401, { error: 'No autorizado.' }); return; }
     try {
-      if (request.method === 'GET' && url.pathname === '/health') { json(response, 200, { ok: true }); return; }
       if (request.method === 'GET' && url.pathname === '/status') {
         const state = registry.transaction((value) => value);
         const active = Object.values(state.emissions).filter((emission) => ['starting', 'running'].includes(emission.status));
@@ -295,15 +295,17 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  const railwayUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null;
   const relay = createRelay({
-    directory: process.env.DORADO_RELAY_DIR,
+    directory: process.env.DORADO_RELAY_DIR || '/tmp/dorado-tv-relay',
     secret: process.env.DORADO_RELAY_SECRET,
-    publicUrl: process.env.DORADO_RELAY_PUBLIC_URL,
+    publicUrl: process.env.DORADO_RELAY_PUBLIC_URL || railwayUrl,
     appOrigin: process.env.DORADO_APP_ORIGIN,
     maxConnections: Number(process.env.DORADO_MAX_CONNECTIONS || 3),
     ffmpeg: process.env.DORADO_FFMPEG || 'ffmpeg',
   });
   const interval = setInterval(relay.tick, 1000);
-  relay.server.listen(Number(process.env.PORT || 5300), process.env.HOST || '127.0.0.1');
+  const host = process.env.HOST || (process.env.RAILWAY_ENVIRONMENT_ID ? '0.0.0.0' : '127.0.0.1');
+  relay.server.listen(Number(process.env.PORT || 5300), host);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { clearInterval(interval); relay.stop(); relay.server.close(); });
 }

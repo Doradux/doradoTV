@@ -94,6 +94,7 @@ test('one upstream serves two viewers and closing it revokes both media tokens',
   const base = `http://127.0.0.1:${relay.server.address().port}`;
   const control = (path, data) => fetch(base + path, { method: 'POST', headers: { Authorization: 'Bearer testing-secret', 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   try {
+    assert.equal((await fetch(base + '/health')).status, 200);
     const channel = { name: 'Prueba', url: 'http://example.test/live.ts' };
     const first = await (await control('/start', { channel, user_id: 1, name: 'Ana', tab: 'one' })).json();
     const second = await (await control('/start', { channel, user_id: '2', name: 'Luis', tab: 'two' })).json();
