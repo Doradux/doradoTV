@@ -578,8 +578,16 @@ function mountPlayer(session, account) {
       const source = await file.text();
       const parsed = parsePlaylist(source);
       if (!parsed.length) throw new Error('El archivo no contiene canales válidos.');
-      status.textContent = 'Guardando lista y comprobando el límite de conexiones…';
-      const next = await inRoom('upload', { data: { filename: file.name, source, revision: session.revision } });
+      const chunkChars = 512 * 1024;
+      const totalChunks = Math.max(1, Math.ceil(source.length / chunkChars));
+      status.textContent = 'Iniciando subida…';
+      const upload = await inRoom('upload-begin', { data: { filename: file.name, revision: session.revision, bytes: file.size, totalChunks } });
+      for (let index = 0; index < totalChunks; index += 1) {
+        status.textContent = `Subiendo lista… ${index + 1}/${totalChunks}`;
+        await inRoom('upload-chunk', { data: { id: upload.id, index, chunk: source.slice(index * chunkChars, (index + 1) * chunkChars) } });
+      }
+      status.textContent = 'Validando lista y comprobando el límite de conexiones…';
+      const next = await inRoom('upload-commit', { data: { id: upload.id } });
       Object.assign(session, next);
       settings?.refresh(next);
       setPlaylist(parsed);
