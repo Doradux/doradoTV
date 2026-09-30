@@ -10,6 +10,7 @@ import { RelayRegistry } from './registry.js';
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
 const STARTUP_TIMEOUT = 35;
+const START_READY_TIMEOUT_MS = 8_000;
 const SEGMENT = /^segment_[0-9]{9,}\.ts$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -219,6 +220,20 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     }
   }
 
+  async function waitForPlaylist(emissionId) {
+    const deadline = Date.now() + START_READY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      tick();
+      const state = registry.transaction((value) => value);
+      const emission = state.emissions[emissionId];
+      const playlist = join(directory, emissionId, 'index.m3u8');
+      if (emission?.status === 'running' && existsSync(playlist)) return true;
+      if (!emission || ['failed', 'closed'].includes(emission.status)) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  }
+
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, mediaOrigin);
     const cors = getCors(request);
@@ -278,6 +293,15 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
         });
         if (!result) { json(response, 409, { error: 'Cierra un canal para liberar una conexión.' }); return; }
         tick();
+        if (!(await waitForPlaylist(result.emission_id))) {
+          registry.transaction((state) => {
+            delete state.sessions[result.id];
+            const emission = state.emissions[result.emission_id];
+            if (emission && !Object.values(state.sessions).some((session) => session.emission_id === result.emission_id)) emission.status = 'failed';
+          });
+          tick();
+          json(response, 503, { error: 'El relay no pudo preparar la emisión a tiempo.' }); return;
+        }
         json(response, 200, { session_id: result.id, emission_id: result.emission_id, playlist_url: `${requestOrigin(request)}/media/${result.id}/index.m3u8?token=${result.token}` }); return;
       }
       if (request.method === 'POST' && url.pathname === '/ping') {

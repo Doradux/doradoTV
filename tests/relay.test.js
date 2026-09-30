@@ -73,6 +73,53 @@ test('registry keeps registry.json untouched when a transaction does not change 
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('start waits until the HLS manifest is ready', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dorado-relay-ready-'));
+  const spawnProcess = (_command, args) => {
+    const playlist = args.at(-1);
+    mkdirSync(dirname(playlist), { recursive: true });
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.kill = () => { child.exitCode = 0; };
+    setTimeout(() => {
+      writeFileSync(playlist, '#EXTM3U\n#EXTINF:4,\nsegment_000000001.ts\n');
+      writeFileSync(join(dirname(playlist), 'segment_000000001.ts'), 'video');
+    }, 120);
+    return child;
+  };
+  const relay = createRelay({
+    directory,
+    secret: 'testing-secret',
+    appOrigin: 'http://127.0.0.1:5199',
+    spawnProcess,
+    resolveChannel: async (url) => ({ original: url, pinned: 'http://1.1.1.1/live.ts', host: 'example.test' }),
+  });
+  await new Promise((resolve) => relay.server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${relay.server.address().port}`;
+  try {
+    const startedAt = Date.now();
+    const response = await fetch(base + '/start', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer testing-secret',
+        'Content-Type': 'application/json',
+        'X-Forwarded-Host': 'relay-test.code.run',
+        'X-Forwarded-Proto': 'https',
+      },
+      body: JSON.stringify({ channel: { name: 'Prueba', url: 'http://example.test/live.ts' }, user_id: '1', name: 'Ana', tab: 'one' }),
+    });
+    const started = await response.json();
+    assert.equal(response.status, 200);
+    assert.ok(Date.now() - startedAt >= 100);
+    const mediaUrl = started.playlist_url.replace('https://relay-test.code.run', base);
+    assert.equal((await fetch(mediaUrl)).status, 200);
+  } finally {
+    relay.stop();
+    await new Promise((resolve) => relay.server.close(resolve));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('one upstream serves two viewers and closing it revokes both media tokens', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'dorado-relay-'));
   let launches = 0, lastArgs = null;

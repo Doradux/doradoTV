@@ -296,9 +296,26 @@ function mountPlayer(session, account) {
           if (token !== playbackToken) return;
           if (!Hls.isSupported()) throw new Error('HLS no disponible');
           hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-          hls.on(Hls.Events.ERROR, (_event, data) => { if (!pageUnloading && data.fatal && token === playbackToken) { clearRememberedPlayback(); stop(); setStatus('No se pudo reproducir el canal. Comprueba la señal.', true); } });
-          hls.loadSource(source);
-          hls.attachMedia(video);
+          const instance = hls;
+          await new Promise((resolve, reject) => {
+            const onError = (_event, data) => {
+              if (!data.fatal) return;
+              instance.off(Hls.Events.ERROR, onError);
+              instance.off(Hls.Events.MANIFEST_PARSED, onParsed);
+              reject(new Error('No se pudo cargar la señal HLS.'));
+            };
+            const onParsed = () => {
+              instance.off(Hls.Events.ERROR, onError);
+              instance.off(Hls.Events.MANIFEST_PARSED, onParsed);
+              resolve();
+            };
+            instance.on(Hls.Events.ERROR, onError);
+            instance.on(Hls.Events.MANIFEST_PARSED, onParsed);
+            instance.attachMedia(video);
+            instance.loadSource(source);
+          });
+          if (token !== playbackToken || hls !== instance) return;
+          instance.on(Hls.Events.ERROR, (_event, data) => { if (!pageUnloading && data.fatal && token === playbackToken) { clearRememberedPlayback(); stop(); setStatus('No se pudo reproducir el canal. Comprueba la señal.', true); } });
         }
       } else if (path.endsWith('.ts')) {
         const { default: mpegts } = await import('mpegts.js');
