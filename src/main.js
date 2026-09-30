@@ -283,7 +283,6 @@ function mountPlayer(session, account) {
     try {
       await releasePending;
       if (token !== playbackToken) return;
-      if (location.protocol === 'https:' && channel.url.startsWith('http:')) throw new Error('Este canal necesita una señal HTTPS para reproducirse aquí.');
       const started = await inRoom('start', { data: { channelId: channel.id, tab: tabId } });
       if (token !== playbackToken) { inRoom('release', { data: { id: started.id } }).catch(() => {}); return; }
       playbackLease = started;

@@ -157,6 +157,62 @@ test('guests can see active channel, programme and viewers without owner control
   assert.equal(typeof ownerStatus.connections[0].id, 'string');
 });
 
+test('HTTP channels use the HTTPS relay and relay sessions follow playback leases', async () => {
+  const f = fixture(), who = await owner(f);
+  const relayCalls = [];
+  f.service.relay = {
+    configured: true,
+    async start(channel, identity, tab) {
+      relayCalls.push(['start', channel.url, identity, tab]);
+      return {
+        sessionId: 'relay-session',
+        emissionId: 'relay-emission',
+        url: 'https://relay.example.test/media/session/index.m3u8?token=test',
+      };
+    },
+    async ping(sessionId, identity, playing) {
+      relayCalls.push(['ping', sessionId, identity, playing]);
+      return { kicked: false, status: playing ? 'running' : 'closed' };
+    },
+    async close(emissionId, closedBy) {
+      relayCalls.push(['close', emissionId, closedBy]);
+      return { ok: true };
+    },
+  };
+  const created = await f.service.create(who.account, { slug: 'sala-http', title: 'HTTP', password });
+  const httpPlaylist = playlist.replaceAll('https://media.example.test', 'http://media.example.test');
+  const current = await f.service.upload(created.slug, who, { filename: 'http.m3u', source: httpPlaylist, revision: created.revision });
+  const visitor = await guest(f, current.slug);
+  const started = await f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-http' });
+  assert.match(started.url, /^https:\/\/relay\.example\.test\//);
+  const storedLease = (await read(f.store, `leases/room-${current.slug}`)).leases[0];
+  assert.equal(storedLease.relaySessionId, 'relay-session');
+  assert.equal(storedLease.relayEmissionId, 'relay-emission');
+
+  const heartbeat = await f.service.playback(current.slug, visitor, { id: started.id }, 'ping');
+  assert.equal(heartbeat.kicked, false);
+  await f.service.playback(current.slug, visitor, { id: started.id }, 'release');
+  assert(relayCalls.some((call) => call[0] === 'ping' && call[3] === true));
+  assert(relayCalls.some((call) => call[0] === 'ping' && call[3] === false));
+
+  const restarted = await f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-http' });
+  await f.service.playback(current.slug, who, { id: restarted.id }, 'close');
+  assert(relayCalls.some((call) => call[0] === 'close' && call[1] === 'relay-emission'));
+});
+
+test('HTTP channels fail clearly when no HTTPS relay is configured', async () => {
+  const f = fixture(), who = await owner(f);
+  const created = await f.service.create(who.account, { slug: 'sala-http', title: 'HTTP', password });
+  const httpPlaylist = playlist.replaceAll('https://media.example.test', 'http://media.example.test');
+  const current = await f.service.upload(created.slug, who, { filename: 'http.m3u', source: httpPlaylist, revision: created.revision });
+  const visitor = await guest(f, current.slug);
+  await assert.rejects(
+    f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-http' }),
+    { status: 503, message: 'Este canal usa HTTP y necesita configurar el relay HTTPS.' },
+  );
+  assert.equal((await f.service.status(current.slug, who)).active, 0);
+});
+
 test('provider slots are shared by rooms using the same account', async () => {
   const f = fixture(1), who = await owner(f); await room(f, who); await room(f, who, 'otra-sala');
   const first = await guest(f), second = await guest(f, 'otra-sala');

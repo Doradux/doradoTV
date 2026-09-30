@@ -3,6 +3,7 @@ import { parsePlaylist } from '../../src/playlist.js';
 import { RoomError, mutate, read } from './room-store.js';
 import { hashPassword, verifyPassword, digest, secretToken, seal, unseal, newSession, nowSeconds } from './room-security.js';
 import { detectProviders, channelProvider, currentProgram } from './room-provider.js';
+import { createRelayClient } from './room-relay.js';
 
 export const MAX_PLAYLIST_BYTES = 10 * 1024 * 1024;
 export const UPLOAD_CHUNK_CHARS = 512 * 1024;
@@ -24,8 +25,9 @@ export function roomView(room, account) {
     revision: room.revision, updated: room.updated, created: room.created };
 }
 export class RoomsService {
-  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, program = currentProgram, sendMail } = {}) {
+  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, program = currentProgram, sendMail, relay } = {}) {
     this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.program = program; this.sendMail = sendMail;
+    this.relay = relay ?? createRelayClient(env);
   }
   async googleLogin({ sub, email }) {
     // Google subjects are stable. Never merge accounts merely by matching email.
@@ -292,8 +294,13 @@ export class RoomsService {
   playlist(room) { return room.playlist ? unseal(room.playlist, `playlist:${room.slug}`, this.env) : ''; }
   async clearRoomLeases(room) {
     const active = await read(this.store, `leases/room-${room.slug}`);
-    const buckets = new Set([`room-${room.slug}`, ...room.providers.map((item) => item.id), ...(active?.leases || []).map((item) => item.provider)]);
+    const leases = active?.leases || [];
+    const buckets = new Set([`room-${room.slug}`, ...room.providers.map((item) => item.id), ...leases.map((item) => item.provider)]);
     await Promise.all([...buckets].filter(Boolean).map((id) => mutate(this.store, `leases/${id}`, (state) => ({ ...state, leases: (state?.leases || []).filter((lease) => lease.room !== room.slug) }))));
+    if (this.relay.configured) {
+      const emissions = [...new Set(leases.map((lease) => lease.relayEmissionId).filter(Boolean))];
+      await Promise.allSettled(emissions.map((id) => this.relay.close(id, 'Propietario')));
+    }
   }
   async remove(slug, who, revision) {
     const room = await this.access(slug, who, true);
@@ -309,13 +316,18 @@ export class RoomsService {
     if (typeof tab !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(tab)) throw new RoomError('Sesión de reproducción inválida.');
     const channel = parsePlaylist(this.playlist(room)).find((item) => item.id === Number(channelId));
     if (!channel) throw new RoomError('El canal ya no está disponible.', 404);
+    const protocol = new URL(channel.url).protocol;
+    const needsRelay = protocol === 'http:';
+    if (needsRelay && !this.relay.configured) throw new RoomError('Este canal usa HTTP y necesita configurar el relay HTTPS.', 503);
     const provider = channelProvider(channel, slug, this.env);
     const maximum = room.providers.find((item) => item.id === provider)?.maximum ?? null;
     const id = randomUUID();
+    const viewerName = who.account?.username || who.account?.name || 'Invitado';
     const lease = { id, provider, room: slug, version: room.version, sessionId: who.sessionId, tab, channelId: channel.id, channelName: channel.name,
-      name: who.account?.username || who.account?.name || 'Invitado', expires: this.clock() + LEASE_SECONDS };
+      name: viewerName, expires: this.clock() + LEASE_SECONDS };
     // Room budget and provider budget are independent; rollback if the second is full.
     const roomBucket = `room-${slug}`;
+    const keys = [...new Set([roomBucket, provider])];
     const reserve = (bucket, cap) => mutate(this.store, `leases/${bucket}`, (state) => {
       const leases = (state?.leases || []).filter((item) => item.expires > this.clock() && !(item.sessionId === who.sessionId && item.tab === tab));
       const capacity = bucket === roomBucket ? cap : state?.maximum ?? cap;
@@ -325,14 +337,30 @@ export class RoomsService {
     await reserve(roomBucket, room.limit);
     try { if (provider !== roomBucket) await reserve(provider, maximum); }
     catch (error) { await this.releaseBucket(roomBucket, id, who.sessionId); throw error; }
-    // A simultaneous room edit or a newer start in this tab must win.
-    const latestRoom = await this.access(slug, who).catch(() => null);
-    const latestSlots = await read(this.store, `leases/${roomBucket}`);
-    if (!latestRoom || latestRoom.revision !== room.revision || !latestSlots?.leases.some((item) => item.id === id)) {
-      await Promise.all([...new Set([roomBucket, provider])].map((key) => this.releaseBucket(key, id, who.sessionId)));
-      throw new RoomError('La sala o la reproducción han cambiado. Vuelve a intentarlo.', 409);
+
+    let relaySession = null;
+    try {
+      if (needsRelay) {
+        relaySession = await this.relay.start({ ...channel, viewerName }, who.sessionId, tab);
+        await Promise.all(keys.map((key) => mutate(this.store, `leases/${key}`, (state) => ({
+          ...state,
+          leases: (state?.leases || []).map((item) => item.id === id
+            ? { ...item, relaySessionId: relaySession.sessionId, relayEmissionId: relaySession.emissionId }
+            : item),
+        }))));
+      }
+      // A simultaneous room edit or a newer start in this tab must win.
+      const latestRoom = await this.access(slug, who).catch(() => null);
+      const latestSlots = await read(this.store, `leases/${roomBucket}`);
+      if (!latestRoom || latestRoom.revision !== room.revision || !latestSlots?.leases.some((item) => item.id === id)) {
+        throw new RoomError('La sala o la reproducción han cambiado. Vuelve a intentarlo.', 409);
+      }
+      return { id, provider, url: relaySession?.url || channel.url, expires: lease.expires };
+    } catch (error) {
+      await Promise.all(keys.map((key) => this.releaseBucket(key, id, who.sessionId)));
+      if (relaySession?.sessionId) await this.relay.ping(relaySession.sessionId, who.sessionId, false).catch(() => {});
+      throw error;
     }
-    return { id, provider, url: channel.url, expires: lease.expires };
   }
   async releaseBucket(bucket, id, sessionId, ownerRoom) {
     await mutate(this.store, `leases/${bucket}`, (state) => ({ ...state, leases: (state?.leases || []).filter((lease) => !(lease.id === id && (lease.sessionId === sessionId || lease.room === ownerRoom))) }));
@@ -347,6 +375,13 @@ export class RoomsService {
     const keys = [...new Set([bucket, provider])];
     if (action !== 'ping') {
       await Promise.all(keys.map((key) => this.releaseBucket(key, lease.id, who.sessionId, action === 'close' ? slug : undefined)));
+      if (lease.relaySessionId && this.relay.configured) {
+        if (action === 'close' && lease.relayEmissionId) {
+          await this.relay.close(lease.relayEmissionId, who.account?.username || who.account?.name || 'Propietario').catch(() => {});
+        } else {
+          await this.relay.ping(lease.relaySessionId, lease.sessionId, false).catch(() => {});
+        }
+      }
       return { ok: true };
     }
     let alive = lease.expires > this.clock() && lease.version === room.version;
@@ -358,6 +393,15 @@ export class RoomsService {
           return { ...current, leases: current.leases.filter((item) => item.expires > this.clock()).map((item) => item.id === lease.id ? { ...item, expires: this.clock() + LEASE_SECONDS } : item) };
         });
       }
+    }
+    if (alive && lease.relaySessionId && this.relay.configured) {
+      try {
+        const relay = await this.relay.ping(lease.relaySessionId, lease.sessionId, true);
+        if (relay?.kicked) {
+          alive = false;
+          await Promise.all(keys.map((key) => this.releaseBucket(key, lease.id, lease.sessionId)));
+        }
+      } catch { /* A transient control-plane error must not immediately kill a working media stream. */ }
     }
     return { kicked: !alive, expires: this.clock() + LEASE_SECONDS };
   }
