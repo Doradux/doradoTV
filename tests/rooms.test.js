@@ -3,17 +3,17 @@ import assert from 'node:assert/strict';
 import { RoomsService, LEASE_SECONDS } from '../netlify/lib/rooms-service.js';
 import { read } from '../netlify/lib/room-store.js';
 import { digest, identity, cookie, ACCOUNT_COOKIE, GUEST_COOKIE, seal, unseal, checkCaptcha } from '../netlify/lib/room-security.js';
-import { channelProvider, detectProviders, publicAddress } from '../netlify/lib/room-provider.js';
+import { channelProvider, currentProgram, detectProviders, publicAddress } from '../netlify/lib/room-provider.js';
 import { createRoomsHandler } from '../netlify/functions/rooms.js';
 import { memoryBlobStore } from './helpers/blob-store.js';
 
 const env = { DORADO_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'), TURNSTILE_SITE_KEY: 'test-site-key', TURNSTILE_SECRET_KEY: 'test-secret', SMTP_USER: 'sender@example.test', SMTP_PASSWORD: 'test-only', DORADO_APP_URL: 'https://app.example.test' };
 const password = 'Una clave privada 123';
-const playlist = '#EXTM3U\n#EXTINF:-1 group-title="General",Canal uno\nhttps://media.example.test/live/user/password/1.m3u8\n#EXTINF:-1 group-title="Cine",Canal dos\nhttps://media.example.test/live/user/password/2.m3u8';
+const playlist = '#EXTM3U\n#EXTINF:-1 group-title="General" tvg-logo="https://img.example.test/canal-uno.png",Canal uno\nhttps://media.example.test/live/user/password/1.m3u8\n#EXTINF:-1 group-title="Cine",Canal dos\nhttps://media.example.test/live/user/password/2.m3u8';
 function fixture(maximum = 3) {
   const store = memoryBlobStore(), emails = []; let time = 100000;
   const provider = channelProvider({ url: 'https://media.example.test/live/user/password/1.m3u8' }, 'test', env);
-  const service = new RoomsService(store, { env, clock: () => time, detect: async () => [{ id: provider, maximum }], sendMail: async (...args) => emails.push(args) });
+  const service = new RoomsService(store, { env, clock: () => time, detect: async () => [{ id: provider, maximum }], program: async () => 'Noticias de prueba', sendMail: async (...args) => emails.push(args) });
   return { store, service, emails, provider, clock: () => time, advance: (seconds) => { time += seconds; } };
 }
 async function owner(f, email = 'owner@example.test') {
@@ -106,6 +106,22 @@ test('one simultaneous viewer wins the last slot; expired leases release capacit
   assert((await f.service.start(current.slug, visitors[1], { channelId: 1, tab: 'browser-tab-1' })).id);
 });
 
+test('guests can see active channel, programme and viewers without owner controls', async () => {
+  const f = fixture(), who = await owner(f); const current = await room(f, who), visitor = await guest(f);
+  await f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-guest' });
+  const guestStatus = await f.service.status(current.slug, visitor);
+  assert.equal(guestStatus.active, 1);
+  assert.deepEqual(guestStatus.connections[0], {
+    name: 'Invitado',
+    channelId: 1,
+    channelName: 'Canal uno',
+    channelLogo: 'https://img.example.test/canal-uno.png',
+    program: 'Noticias de prueba',
+  });
+  const ownerStatus = await f.service.status(current.slug, who);
+  assert.equal(typeof ownerStatus.connections[0].id, 'string');
+});
+
 test('provider slots are shared by rooms using the same account', async () => {
   const f = fixture(1), who = await owner(f); await room(f, who); await room(f, who, 'otra-sala');
   const first = await guest(f), second = await guest(f, 'otra-sala');
@@ -135,6 +151,21 @@ test('unknown provider limits remain configurable; transient failures preserve k
   f.service.detect = async () => [{ id: f.provider, maximum: null }];
   current = await f.service.upload(current.slug, who, { filename: 'x.m3u', source: playlist, revision: current.revision });
   assert.equal(current.detectedMaximum, 3);
+});
+
+test('current programme lookup decodes EPG titles and reuses its short cache', async () => {
+  let calls = 0;
+  const source = 'https://epg.example.test/live/viewer/password/987.m3u8';
+  const now = 200000;
+  const fetcher = async (url) => {
+    calls += 1;
+    assert.equal(url.searchParams.get('action'), 'get_short_epg');
+    assert.equal(url.searchParams.get('stream_id'), '987');
+    return { epg_listings: [{ start_timestamp: now - 60, stop_timestamp: now + 60, title: Buffer.from('Noticias').toString('base64') }] };
+  };
+  assert.equal(await currentProgram(source, fetcher, () => now), 'Noticias');
+  assert.equal(await currentProgram(source, fetcher, () => now + 1), 'Noticias');
+  assert.equal(calls, 1);
 });
 
 test('provider detection rejects invalid maxima and private network addresses', async () => {

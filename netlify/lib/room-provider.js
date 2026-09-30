@@ -4,13 +4,17 @@ import { request as httpRequest } from 'node:http';
 import ipaddr from 'ipaddr.js';
 import { privateId } from './room-security.js';
 
-export function providerAccount(value) {
+function providerStream(value) {
   try {
     const url = new URL(value);
     const match = url.pathname.match(/^\/(?:live\/)?([^/]+)\/([^/]+)\/(\d+)\.(?:ts|m3u8)$/i);
     if (!match || !['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null;
-    return { origin: url.origin, username: decodeURIComponent(match[1]), password: decodeURIComponent(match[2]) };
+    return { origin: url.origin, username: decodeURIComponent(match[1]), password: decodeURIComponent(match[2]), streamId: match[3] };
   } catch { return null; }
+}
+export function providerAccount(value) {
+  const provider = providerStream(value);
+  return provider ? { origin: provider.origin, username: provider.username, password: provider.password } : null;
 }
 export function publicAddress(address) {
   try { return ipaddr.process(address).range() === 'unicast'; } catch { return false; }
@@ -59,6 +63,42 @@ export async function detectProviders(channels, env = process.env, fetcher = fet
     } catch { /* Unknown must not be advertised as unlimited at the provider. */ }
     return { id, maximum };
   }));
+}
+const programmeCache = new Map();
+function decodeProgramme(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  if (!text || !/^[A-Za-z0-9+/]+={0,2}$/.test(text) || text.length % 4) return text || null;
+  try {
+    const decoded = Buffer.from(text, 'base64').toString('utf8').trim();
+    const roundTrip = Buffer.from(decoded, 'utf8').toString('base64').replace(/=+$/, '');
+    return decoded && roundTrip === text.replace(/=+$/, '') ? decoded : text;
+  } catch { return text; }
+}
+export async function currentProgram(channelUrl, fetcher = fetchProviderJson, clock = () => Math.floor(Date.now() / 1000)) {
+  const provider = providerStream(channelUrl);
+  if (!provider) return null;
+  const key = `${provider.origin}\u0000${provider.username}\u0000${provider.password}\u0000${provider.streamId}`;
+  const hit = programmeCache.get(key);
+  if (hit?.expires > clock()) return hit.value;
+  if (hit?.pending) return hit.pending;
+  const pending = (async () => {
+    try {
+      const url = new URL('/player_api.php', provider.origin);
+      url.search = new URLSearchParams({ username: provider.username, password: provider.password, action: 'get_short_epg', stream_id: provider.streamId, limit: '6' });
+      const result = await fetcher(url);
+      const now = clock();
+      const current = result?.epg_listings?.find((item) => Number(item.start_timestamp) <= now && Number(item.stop_timestamp) > now);
+      const value = decodeProgramme(current?.title);
+      programmeCache.set(key, { value, expires: now + 45 });
+      return value;
+    } catch {
+      programmeCache.set(key, { value: null, expires: clock() + 20 });
+      return null;
+    }
+  })();
+  programmeCache.set(key, { value: null, expires: 0, pending });
+  return pending;
 }
 export function channelProvider(channel, roomId, env = process.env) {
   const account = providerAccount(channel.url);

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { parsePlaylist } from '../../src/playlist.js';
 import { RoomError, mutate, read } from './room-store.js';
 import { hashPassword, verifyPassword, digest, secretToken, seal, unseal, newSession, nowSeconds } from './room-security.js';
-import { detectProviders, channelProvider } from './room-provider.js';
+import { detectProviders, channelProvider, currentProgram } from './room-provider.js';
 
 export const MAX_PLAYLIST_BYTES = 10 * 1024 * 1024;
 export const LEASE_SECONDS = 90;
@@ -21,8 +21,8 @@ export function roomView(room, account) {
     revision: room.revision, updated: room.updated, created: room.created };
 }
 export class RoomsService {
-  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, sendMail } = {}) {
-    this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.sendMail = sendMail;
+  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, program = currentProgram, sendMail } = {}) {
+    this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.program = program; this.sendMail = sendMail;
   }
   async googleLogin({ sub, email }) {
     // Google subjects are stable. Never merge accounts merely by matching email.
@@ -319,6 +319,27 @@ export class RoomsService {
     const room = await this.access(slug, who);
     const state = await read(this.store, `leases/room-${slug}`);
     const active = (state?.leases || []).filter((lease) => lease.expires > this.clock() && lease.version === room.version);
-    return { active: active.length, limit: room.limit, connections: room.ownerId === who.account?.id ? active.map(({ id, name, channelName }) => ({ id, name, channelName })) : [] };
+    const owner = room.ownerId === who.account?.id;
+    const channels = new Map(parsePlaylist(this.playlist(room)).map((channel) => [channel.id, channel]));
+    const programmeByChannel = new Map();
+    await Promise.all([...new Set(active.map((lease) => lease.channelId))].map(async (channelId) => {
+      const channel = channels.get(channelId);
+      programmeByChannel.set(channelId, channel ? await this.program(channel.url) : null);
+    }));
+    return {
+      active: active.length,
+      limit: room.limit,
+      connections: active.map(({ id, name, channelId, channelName }) => {
+        const channel = channels.get(channelId);
+        return {
+          ...(owner ? { id } : {}),
+          name,
+          channelId,
+          channelName,
+          channelLogo: channel?.logo || '',
+          program: programmeByChannel.get(channelId) || null,
+        };
+      }),
+    };
   }
 }
