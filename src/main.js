@@ -29,7 +29,7 @@ function mountPlayer(session, account) {
     <header class="app-header">
       <a href="#" class="brand">
         <div>
-          <span>Dorado<span class="brand-tv">TV</span></span><span id="current-room-title" class="brand-caption">${escapeHtml(session.title)}</span>
+          <span class="brand-title">DORADOTV</span><span id="current-room-title" class="brand-caption">${escapeHtml(session.title)}</span>
         </div>
       </a>
       <div class="header-actions"><button id="leave-room" class="text-link">${iconSvg(DoorOpen, 'h-4 w-4')}<span>${account ? 'Mis salas' : 'Salir de la sala'}</span></button>

@@ -5,7 +5,7 @@ import { createDialog, reveal } from './motion.js';
 import { createCustomSelect } from './custom-select.js';
 import { renderGoogleSignIn } from './google-signin.js';
 
-const brand = `<a class="brand" href="/">${iconSvg(TvMinimal, 'h-6 w-6')}<span>Dorado<span class="brand-tv">TV</span></span></a>`;
+const brand = `<a class="brand" href="/">${iconSvg(TvMinimal, 'h-6 w-6')}<span class="brand-title">DORADOTV</span></a>`;
 let turnstilePromise;
 function loadTurnstile() {
   if (window.turnstile) return Promise.resolve(window.turnstile);
