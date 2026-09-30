@@ -93,7 +93,12 @@ async function body(request) {
 }
 
 export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnections = 3, ffmpeg = 'ffmpeg', spawnProcess = spawn, resolveChannel = resolveHttpChannel, clock = () => Math.floor(Date.now() / 1000) }) {
-  if (!directory || !secret || !publicUrl || !appOrigin || !Number.isInteger(maxConnections) || maxConnections < 1) throw new Error('Configura DORADO_RELAY_DIR, DORADO_RELAY_SECRET, DORADO_RELAY_PUBLIC_URL, DORADO_APP_ORIGIN y un límite de conexiones válido.');
+  const missing = [];
+  if (!directory) missing.push('DORADO_RELAY_DIR');
+  if (!secret) missing.push('DORADO_RELAY_SECRET');
+  if (!appOrigin) missing.push('DORADO_APP_ORIGIN');
+  if (!Number.isInteger(maxConnections) || maxConnections < 1) missing.push('DORADO_MAX_CONNECTIONS');
+  if (missing.length) throw new Error(`Falta configurar: ${missing.join(', ')}.`);
   const registry = new RelayRegistry(directory);
   const lockFile = join(directory, 'worker.lock');
   try {
@@ -109,11 +114,27 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   closeSync(lock);
   const processes = new Map();
   const now = clock;
-  const publicBase = new URL(publicUrl);
-  const publicIsLocal = ['localhost', '127.0.0.1', '::1'].includes(publicBase.hostname);
-  if (publicBase.protocol !== 'https:' && !(publicIsLocal && publicBase.protocol === 'http:')) throw new Error('DORADO_RELAY_PUBLIC_URL debe usar HTTPS.');
-  const mediaOrigin = publicBase.origin;
+  let configuredOrigin = null;
+  if (publicUrl) {
+    const publicBase = new URL(publicUrl);
+    const publicIsLocal = ['localhost', '127.0.0.1', '::1'].includes(publicBase.hostname);
+    if (publicBase.protocol !== 'https:' && !(publicIsLocal && publicBase.protocol === 'http:')) throw new Error('DORADO_RELAY_PUBLIC_URL debe usar HTTPS.');
+    configuredOrigin = publicBase.origin;
+  }
+  const mediaOrigin = configuredOrigin || 'http://relay.invalid';
   const allowedOrigin = new URL(appOrigin).origin;
+  const requestOrigin = (request) => {
+    if (configuredOrigin) return configuredOrigin;
+    const forwardedHost = String(request.headers['x-forwarded-host'] || '').split(',')[0].trim();
+    const host = forwardedHost || String(request.headers.host || '').trim();
+    if (!host || /[\\/\s]/.test(host)) throw new Error('Northflank aún no ha asignado un dominio público al puerto 5300.');
+    const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+    const hostname = host.replace(/^\[|\](?::\d+)?$/g, '').split(':')[0];
+    const local = ['localhost', '127.0.0.1', '::1'].includes(hostname);
+    const protocol = forwardedProto || (local ? 'http' : 'https');
+    if (protocol !== 'https' && !(local && protocol === 'http')) throw new Error('El relay público debe usar HTTPS.');
+    return new URL(`${protocol}://${host}`).origin;
+  };
   const getCors = () => ({ 'Access-Control-Allow-Origin': allowedOrigin, 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin', 'Referrer-Policy': 'no-referrer' });
 
   // A restart invalidates all browser sessions and removes stale HLS output.
@@ -257,7 +278,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
         });
         if (!result) { json(response, 409, { error: 'Cierra un canal para liberar una conexión.' }); return; }
         tick();
-        json(response, 200, { session_id: result.id, emission_id: result.emission_id, playlist_url: `${publicUrl.replace(/\/$/, '')}/media/${result.id}/index.m3u8?token=${result.token}` }); return;
+        json(response, 200, { session_id: result.id, emission_id: result.emission_id, playlist_url: `${requestOrigin(request)}/media/${result.id}/index.m3u8?token=${result.token}` }); return;
       }
       if (request.method === 'POST' && url.pathname === '/ping') {
         const { session_id: id, user_id: rawUserId, is_playing: playing } = await body(request);
@@ -300,7 +321,7 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     process.env.RENDER_EXTERNAL_URL
     || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
     || (northflankHost ? `https://${northflankHost}` : null);
-  const managedRuntime = !!(northflankHost || process.env.RENDER || process.env.RAILWAY_ENVIRONMENT_ID);
+  const managedRuntime = !!(northflankHost || process.env.NF_PROJECT_ID || process.env.NF_OBJECT_ID || process.env.RENDER || process.env.RAILWAY_ENVIRONMENT_ID);
   const relay = createRelay({
     directory: process.env.DORADO_RELAY_DIR || '/tmp/dorado-tv-relay',
     secret: process.env.DORADO_RELAY_SECRET,

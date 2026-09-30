@@ -89,22 +89,23 @@ test('one upstream serves two viewers and closing it revokes both media tokens',
     return child;
   };
   let now = 100;
-  const relay = createRelay({ directory, secret: 'testing-secret', publicUrl: 'http://127.0.0.1:5300', appOrigin: 'http://127.0.0.1:5199', spawnProcess, resolveChannel: async (url) => ({ original: url, pinned: 'http://1.1.1.1/live.ts', host: 'example.test' }), clock: () => now });
+  const relay = createRelay({ directory, secret: 'testing-secret', appOrigin: 'http://127.0.0.1:5199', spawnProcess, resolveChannel: async (url) => ({ original: url, pinned: 'http://1.1.1.1/live.ts', host: 'example.test' }), clock: () => now });
   await new Promise((resolve) => relay.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${relay.server.address().port}`;
-  const control = (path, data) => fetch(base + path, { method: 'POST', headers: { Authorization: 'Bearer testing-secret', 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const control = (path, data) => fetch(base + path, { method: 'POST', headers: { Authorization: 'Bearer testing-secret', 'Content-Type': 'application/json', 'X-Forwarded-Host': 'relay-test.code.run', 'X-Forwarded-Proto': 'https' }, body: JSON.stringify(data) });
   try {
     assert.equal((await fetch(base + '/health')).status, 200);
     const channel = { name: 'Prueba', url: 'http://example.test/live.ts' };
     const first = await (await control('/start', { channel, user_id: 1, name: 'Ana', tab: 'one' })).json();
     const second = await (await control('/start', { channel, user_id: '2', name: 'Luis', tab: 'two' })).json();
     assert.equal(first.emission_id, second.emission_id);
+    assert.match(first.playlist_url, /^https:\/\/relay-test\.code\.run\/media\//);
     assert.equal(launches, 1);
     assert.equal(lastArgs[lastArgs.indexOf('-i') + 1], 'http://1.1.1.1/live.ts');
     assert.equal(lastArgs[lastArgs.indexOf('-headers') + 1], 'Host: example.test\r\n');
     const forbidden = await fetch(`${base}/media/${first.session_id}/index.m3u8`);
     assert.equal(forbidden.status, 410);
-    const mediaUrl = first.playlist_url.replace('127.0.0.1:5300', `127.0.0.1:${relay.server.address().port}`);
+    const mediaUrl = first.playlist_url.replace('https://relay-test.code.run', base);
     const media = await fetch(mediaUrl);
     assert.equal(media.status, 200);
     assert.match(await media.text(), /segment_000000001\.ts\?token=/);
@@ -120,7 +121,7 @@ test('one upstream serves two viewers and closing it revokes both media tokens',
     relay.tick();
     assert.equal((await (await fetch(base + '/status', { headers: { Authorization: 'Bearer testing-secret' } })).json()).active_count, 0);
     const third = await (await control('/start', { channel, user_id: 1, name: 'Ana', tab: 'one' })).json();
-    const thirdMedia = third.playlist_url.replace('127.0.0.1:5300', `127.0.0.1:${relay.server.address().port}`);
+    const thirdMedia = third.playlist_url.replace('https://relay-test.code.run', base);
     assert.equal((await fetch(thirdMedia)).status, 200);
     now += 61;
     assert.equal((await fetch(thirdMedia)).status, 410, 'the media token needs an authenticated heartbeat');

@@ -4,7 +4,7 @@ El relay se usa solo para canales `http://`. Convierte la señal a HLS HTTPS con
 
 ## Northflank
 
-Expón el puerto `5300` como HTTP público. Northflank inyecta `NF_HOSTS`, que Dorado TV usa automáticamente para construir la URL HTTPS pública, así que no hace falta definir `DORADO_RELAY_PUBLIC_URL` ni `HOST`.
+Expón el puerto `5300` como HTTP público. Dorado TV detecta Northflank automáticamente y obtiene la URL HTTPS pública del propio reverse proxy (o de `NF_HOSTS` cuando ya está disponible), así que no hace falta definir `DORADO_RELAY_PUBLIC_URL` ni `HOST`.
 
 Variables necesarias:
 
