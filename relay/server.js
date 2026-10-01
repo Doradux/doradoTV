@@ -147,11 +147,31 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     if (origin && origin !== allowedOrigin && !castOrigin(origin)) return null;
     return {
       'Access-Control-Allow-Origin': origin || allowedOrigin,
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Accept-Encoding, Range',
       Vary: 'Origin',
       'Referrer-Policy': 'no-referrer',
     };
+  };
+
+  const parseByteRange = (header, size) => {
+    if (!header) return null;
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
+    if (!match || (!match[1] && !match[2])) return { invalid: true };
+    let start;
+    let end;
+    if (!match[1]) {
+      const suffix = Number(match[2]);
+      if (!Number.isSafeInteger(suffix) || suffix <= 0) return { invalid: true };
+      start = Math.max(size - suffix, 0);
+      end = size - 1;
+    } else {
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : size - 1;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) return { invalid: true };
+      end = Math.min(end, size - 1);
+    }
+    return { start, end };
   };
 
   // A restart invalidates all browser sessions and removes stale HLS output.
@@ -269,23 +289,45 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       response.writeHead(204, cors); response.end(); return;
     }
     const match = url.pathname.match(/^\/media\/([0-9a-f-]{36})\/(index\.m3u8|segment_[0-9]{9,}\.ts)$/);
-    if (request.method === 'GET' && match) {
+    if (['GET', 'HEAD'].includes(request.method) && match) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       const [, sessionId, file] = match;
       const emission = touch(sessionId, url.searchParams.get('token'), undefined, true, true);
       if (!emission) { json(response, 410, { error: 'Esta emisión ha terminado.' }, cors); return; }
       const path = join(directory, emission.id, file);
       if (!existsSync(path)) { json(response, 503, { error: 'Preparando emisión.' }, { ...cors, 'Retry-After': '1' }); return; }
-      const headers = { ...cors, 'Content-Type': file === 'index.m3u8' ? 'application/vnd.apple.mpegurl' : 'video/mp2t', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
+      const headers = { ...cors, 'Content-Type': file === 'index.m3u8' ? 'application/vnd.apple.mpegurl' : 'video/mp2t', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes' };
       if (file === 'index.m3u8') {
         try {
           const playlist = readFileSync(path, 'utf8').split('\n').map((line) => SEGMENT.test(line.trim()) ? `${line.trim()}?token=${encodeURIComponent(url.searchParams.get('token'))}` : line).join('\n');
-          response.writeHead(200, headers); response.end(playlist);
+          const playlistHeaders = { ...headers, 'Content-Length': String(Buffer.byteLength(playlist)) };
+          response.writeHead(200, playlistHeaders); response.end(request.method === 'HEAD' ? undefined : playlist);
         } catch { json(response, 503, { error: 'Preparando emisión.' }, { ...cors, 'Retry-After': '1' }); }
       } else {
-        const stream = createReadStream(path);
-        stream.on('error', () => { if (!response.headersSent) json(response, 503, { error: 'Preparando emisión.' }, { ...cors, 'Retry-After': '1' }); else response.destroy(); });
-        stream.on('open', () => { response.writeHead(200, headers); stream.pipe(response); });
+        try {
+          const size = statSync(path).size;
+          const range = parseByteRange(request.headers.range, size);
+          if (range?.invalid) {
+            response.writeHead(416, { ...headers, 'Content-Range': `bytes */${size}`, 'Content-Length': '0' });
+            response.end(); return;
+          }
+          const start = range?.start ?? 0;
+          const end = range?.end ?? size - 1;
+          const partial = !!range;
+          const mediaHeaders = {
+            ...headers,
+            'Content-Length': String(end - start + 1),
+            ...(partial ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
+          };
+          response.writeHead(partial ? 206 : 200, mediaHeaders);
+          if (request.method === 'HEAD') { response.end(); return; }
+          const stream = createReadStream(path, { start, end });
+          stream.on('error', () => response.destroy());
+          stream.pipe(response);
+        } catch {
+          if (!response.headersSent) json(response, 503, { error: 'Preparando emisión.' }, { ...cors, 'Retry-After': '1' });
+          else response.destroy();
+        }
       }
       return;
     }
