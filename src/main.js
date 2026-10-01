@@ -4,7 +4,7 @@ import { createMorph } from 'morphicons/dom';
 import {
   Play, Pause, Volume, Volume1, Volume2, VolumeX, PictureInPicture2, PictureInPicture,
   RectangleHorizontal, PanelRightClose, ChevronDown, Radio,
-  Maximize, Minimize, Bookmark, TvMinimal, Upload, Check,
+  Maximize, Minimize, Bookmark, TvMinimal, Upload, Check, Cast,
   LogOut, LockKeyhole, X, FileUp, Search,
   Settings2, DoorOpen,
 } from 'lucide';
@@ -14,6 +14,7 @@ import { createCustomSelect } from './custom-select.js';
 import { createDialog, reveal } from './motion.js';
 import { iconSvg, morphSvg, escapeHtml } from './ui.js';
 import { roomApi, navigateRoom } from './room-api.js';
+import { setupRemotePlayback } from './remote-playback.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
 const app = document.querySelector('#app');
@@ -41,7 +42,7 @@ function mountPlayer(session, account) {
         <div id="player-shell" class="player-shell">
           <div id="video-stage" class="video-stage">
             <canvas id="ambient" width="96" height="54" aria-hidden="true"></canvas>
-            <video id="video" playsinline preload="none" aria-label="Vídeo del canal seleccionado"></video>
+            <video id="video" playsinline preload="none" x-webkit-airplay="allow" aria-label="Vídeo del canal seleccionado"></video>
             <div id="empty" class="empty-player">
               <div class="empty-icon">${iconSvg(TvMinimal, 'h-9 w-9')}</div>
               <h2>Selecciona un canal</h2>
@@ -53,6 +54,7 @@ function mountPlayer(session, account) {
             <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen" /><output id="volume-value" for="volume" class="volume-value" aria-hidden="true">80%</output></div>
             <span id="playback-badge" class="playback-badge">EN DIRECTO</span>
             <div class="view-controls">
+              <button id="cast" type="button" title="Transmitir a TV" aria-label="Transmitir a TV" aria-pressed="false" class="icon-button" disabled>${iconSvg(Cast, 'h-5 w-5')}</button>
               <button id="pip" type="button" title="Ventana flotante" aria-label="Ventana flotante" aria-pressed="false" class="icon-button">${morphSvg(PictureInPicture2, 'pip-icon')}</button>
               <button id="theater" type="button" title="Modo cine" aria-label="Modo cine" aria-pressed="false" aria-controls="watch-layout" class="icon-button">${morphSvg(RectangleHorizontal, 'theater-icon')}</button>
               <button id="fullscreen" type="button" title="Pantalla completa" aria-label="Pantalla completa" aria-pressed="false" class="icon-button">${morphSvg(Maximize, 'fullscreen-icon')}</button>
@@ -103,6 +105,7 @@ function mountPlayer(session, account) {
   let onlyFavorites = false;
   let playbackToken = 0;
   let playbackLease = null;
+  let playbackSource = '';
   let releasePending = Promise.resolve();
   let heartbeatPending = false;
   let pageUnloading = false;
@@ -129,6 +132,14 @@ function mountPlayer(session, account) {
     target.classList.toggle('text-red-300', error);
     target.classList.toggle('text-slate-400', !error);
   }
+  const remotePlayback = setupRemotePlayback({
+    video,
+    button: $('#cast'),
+    getSource: () => playbackSource,
+    getTitle: () => active?.name || '',
+    setStatus,
+  });
+
   function setLoading(loading) {
     $('#loading').classList.toggle('hidden', !loading);
     $('#loading').classList.toggle('flex', loading);
@@ -160,6 +171,8 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    playbackSource = '';
+    remotePlayback.refresh();
     clearTimeout(retryTimer);
     retryTimer = null;
     if (playbackLease) {
@@ -289,6 +302,8 @@ function mountPlayer(session, account) {
       if (token !== playbackToken) { inRoom('release', { data: { id: started.id } }).catch(() => {}); return; }
       playbackLease = started;
       const source = started.url;
+      playbackSource = source;
+      remotePlayback.refresh();
       refreshConnections();
       const path = new URL(source).pathname.toLowerCase();
       if (path.endsWith('.m3u8')) {

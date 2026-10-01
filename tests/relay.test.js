@@ -156,6 +156,19 @@ test('one upstream serves two viewers and closing it revokes both media tokens',
     const media = await fetch(mediaUrl);
     assert.equal(media.status, 200);
     assert.match(await media.text(), /segment_000000001\.ts\?token=/);
+    const castMedia = await fetch(mediaUrl, { headers: { Origin: 'https://www.gstatic.com' } });
+    assert.equal(castMedia.status, 200);
+    assert.equal(castMedia.headers.get('access-control-allow-origin'), 'https://www.gstatic.com');
+    const castPreflight = await fetch(mediaUrl, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://www.gstatic.com',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'Range',
+      },
+    });
+    assert.equal(castPreflight.status, 204);
+    assert.match(castPreflight.headers.get('access-control-allow-headers') || '', /Range/);
     assert.equal((await fetch(mediaUrl, { headers: { Origin: 'https://evil.example' } })).status, 403);
     const status = await (await fetch(base + '/status', { headers: { Authorization: 'Bearer testing-secret' } })).json();
     assert.equal(status.connections[0].users.length, 2);

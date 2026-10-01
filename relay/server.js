@@ -136,7 +136,23 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     if (protocol !== 'https' && !(local && protocol === 'http')) throw new Error('El relay público debe usar HTTPS.');
     return new URL(`${protocol}://${host}`).origin;
   };
-  const getCors = () => ({ 'Access-Control-Allow-Origin': allowedOrigin, 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin', 'Referrer-Policy': 'no-referrer' });
+  const castOrigin = (origin) => {
+    try {
+      const url = new URL(origin);
+      return url.protocol === 'https:' && (url.hostname === 'gstatic.com' || url.hostname.endsWith('.gstatic.com'));
+    } catch { return false; }
+  };
+  const getCors = (request) => {
+    const origin = String(request.headers.origin || '');
+    if (origin && origin !== allowedOrigin && !castOrigin(origin)) return null;
+    return {
+      'Access-Control-Allow-Origin': origin || allowedOrigin,
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept-Encoding, Range',
+      Vary: 'Origin',
+      'Referrer-Policy': 'no-referrer',
+    };
+  };
 
   // A restart invalidates all browser sessions and removes stale HLS output.
   registry.transaction((state) => {
@@ -249,11 +265,12 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     const url = new URL(request.url, mediaOrigin);
     const cors = getCors(request);
     if (request.method === 'OPTIONS' && url.pathname.startsWith('/media/')) {
-      response.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET' }); response.end(); return;
+      if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
+      response.writeHead(204, cors); response.end(); return;
     }
     const match = url.pathname.match(/^\/media\/([0-9a-f-]{36})\/(index\.m3u8|segment_[0-9]{9,}\.ts)$/);
     if (request.method === 'GET' && match) {
-      if (request.headers.origin && request.headers.origin !== allowedOrigin) { json(response, 403, { error: 'Origen no permitido.' }); return; }
+      if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       const [, sessionId, file] = match;
       const emission = touch(sessionId, url.searchParams.get('token'), undefined, true, true);
       if (!emission) { json(response, 410, { error: 'Esta emisión ha terminado.' }, cors); return; }
