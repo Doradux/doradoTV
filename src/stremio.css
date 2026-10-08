@@ -41,3 +41,44 @@
 .sa-source>svg{flex-shrink:0;color:#fbbf24}.sa-source span{min-width:0}.sa-source strong{display:block;font-size:.8rem;overflow:hidden;text-overflow:ellipsis}.sa-source small{display:block;color:#94a3b8;font-size:.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sa-source:not(:disabled):hover{border-color:#fbbf24}.sa-source:disabled{opacity:.45;cursor:not-allowed}
 #sa-video{width:100%;max-height:390px;background:#000;border-radius:.85rem;display:block;margin-bottom:1rem}
 @media(max-width:750px){.sa-overlay{padding:.25rem}.sa-dialog{height:100dvh;max-height:none;border-radius:0}.sa-layout{display:flex;flex-direction:column;overflow-y:auto}.sa-sidebar{flex:0 0 auto;max-height:220px;border-right:0;border-bottom:1px solid #334155}.sa-main{overflow:visible;flex:1}.sa-toolbar{grid-template-columns:1fr}.sa-heading{padding:1rem}.sa-feature>img,.sa-feature>.sa-no-poster{width:90px}.sa-feature h2{font-size:1.2rem}.sa-grid{grid-template-columns:repeat(auto-fill,minmax(105px,1fr))}.sa-open span{display:none}}
+
+/* Catálogos separados por tipo de contenido */
+.sa-content-switch{display:inline-flex;gap:.25rem;padding:.25rem;margin-bottom:1rem;background:#0d1422;border:1px solid #334155;border-radius:.85rem}
+.sa-content-switch button{padding:.62rem 1.1rem;border:0;border-radius:.65rem;background:transparent;color:#aebdd2;font-weight:800;font-size:.84rem;cursor:pointer}
+.sa-content-switch button[aria-pressed="true"]{background:#fbbf24;color:#172033}
+.sa-content-switch button:focus-visible,.sa-episode:focus-visible,.sa-playback-controls button:focus-visible{outline:2px solid #fbbf24;outline-offset:2px}
+
+/* Selector de temporadas con episodios individuales */
+.sa-seasons{display:flex;align-items:center;gap:1rem;margin-bottom:.8rem}
+.sa-seasons label{font-size:.84rem;font-weight:800;color:#f1f5f9;white-space:nowrap}
+.sa-seasons select{background:#101827;color:#f8fafc;border:1px solid #475569;border-radius:.65rem;padding:.7rem;min-width:0;max-width:350px;flex:1}
+.sa-episode-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.6rem;margin-bottom:1.3rem}
+.sa-episode{display:flex;align-items:center;text-align:left;gap:.7rem;min-width:0;padding:.6rem;border-radius:.75rem;border:1px solid #374457;background:#162033;color:#f8fafc;cursor:pointer}
+.sa-episode:hover,.sa-episode.is-active{border-color:#fbbf24;background:#293144}
+.sa-episode img{width:65px;height:44px;object-fit:cover;border-radius:.4rem;flex-shrink:0}
+.sa-episode span{flex:1;min-width:0}
+.sa-episode small{display:block;font-weight:800;color:#fbbf24;font-size:.7rem}
+.sa-episode strong{display:block;font-weight:750;font-size:.83rem;overflow-wrap:anywhere}
+.sa-episode svg{flex-shrink:0;color:#fbbf24}
+
+/* Controles VOD personalizados: navegación temporal, saltos y pantalla completa */
+.sa-player{background:#030712;border:1px solid #334155;border-radius:.9rem;overflow:hidden;margin-bottom:1rem}
+.sa-player #sa-video{width:100%;max-height:480px;display:block;border:0;border-radius:0;margin:0;aspect-ratio:16/9;object-fit:contain;background:black}
+.sa-player:fullscreen{display:flex;flex-direction:column;justify-content:center;border-radius:0}
+.sa-player:fullscreen #sa-video{max-height:calc(100vh - 105px);flex:1;min-height:0}
+.sa-playback-controls{display:flex;flex-direction:column;gap:.55rem;padding:.65rem 1rem .8rem;background:#101827}
+.sa-playback-controls input[type="range"]{cursor:pointer;accent-color:#fbbf24}
+.sa-playback-controls input:disabled{opacity:.5;cursor:not-allowed}
+#sa-timeline{width:100%;height:5px;margin:.4rem 0;border-radius:99px;appearance:none;-webkit-appearance:none;background:linear-gradient(to right,#fbbf24 var(--seek-fill,0%),#3c475a var(--seek-fill,0%))}
+#sa-timeline::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border:2px solid white;background:#fbbf24;border-radius:50%}
+#sa-timeline::-moz-range-thumb{width:12px;height:12px;border:2px solid white;background:#fbbf24;border-radius:50%}
+.sa-playback-row,.sa-playback-buttons,.sa-playback-options{display:flex;align-items:center;gap:.45rem}
+.sa-playback-row{justify-content:space-between;flex-wrap:wrap;gap:.65rem}
+.sa-playback-controls button{display:inline-flex;align-items:center;justify-content:center;gap:.1rem;position:relative;background:transparent;color:#fff;border:0;border-radius:.45rem;min-width:2.4rem;height:2.4rem;cursor:pointer}
+.sa-playback-controls button:hover:not(:disabled){background:#2d384c;color:#fbbf24}
+.sa-playback-controls button:disabled{opacity:.4;cursor:not-allowed}
+.sa-playback-controls button[data-seek] span{font-size:.6rem;font-weight:900}
+#sa-time{color:#e2e8f0;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:.8rem;font-weight:700}
+.sa-playback-options label{display:flex;align-items:center}
+#sa-volume{width:80px}
+@media(max-width:570px){.sa-main{padding:1rem}.sa-episode-list{grid-template-columns:1fr}.sa-playback-controls{padding:.5rem}.sa-playback-row{gap:.4rem}.sa-playback-controls button{min-width:2rem}#sa-volume{width:65px}.sa-seasons select{max-width:none}}
