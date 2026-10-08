@@ -309,6 +309,7 @@ export class RoomsService {
       return { slug, ownerId: current.ownerId, deleted: true, revision: current.revision + 1, version: current.version + 1 };
     });
     await this.clearRoomLeases(room);
+    await this.store.delete(`addons/${slug}`);
     await mutate(this.store, `account/${who.account.id}`, (account) => ({ ...account, rooms: account.rooms.filter((value) => value !== slug) }));
   }
   async start(slug, who, { channelId, tab }) {
