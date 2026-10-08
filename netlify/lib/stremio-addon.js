@@ -58,7 +58,7 @@ export async function safeJson(urlString, { resolver = lookup, transport = https
         }, fail);
         return;
       }
-      if (res.statusCode !== 200) { res.resume(); fail(new RoomError('El addon devolvió un error HTTP.', 502)); return; }
+      if (res.statusCode !== 200) { res.resume(); fail(new RoomError(`El addon respondió con HTTP ${res.statusCode}.`, 502)); return; }
       if (Number(res.headers['content-length']) > MAX_BYTES) { res.destroy(); fail(new RoomError('Respuesta del addon demasiado grande.', 502)); return; }
       let length = 0;
       const chunks = [];
