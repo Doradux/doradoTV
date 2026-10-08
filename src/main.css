@@ -97,6 +97,13 @@
 .relay-panel { display: flex; flex-direction: column; min-width: 0; padding: 21px 19px; border: 1px solid #ffffff10; border-radius: 18px; background: #101319; }
 .relay-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .relay-heading h2 { margin-top: 4px; font-size: 21px; font-weight: 650; letter-spacing: -.5px; }
+.relay-heading { flex-wrap: wrap; }
+.relay-heading:has(+ #relay-details[hidden]) { margin-bottom: 0; }
+.relay-toggle { flex-shrink: 0; padding: 9px 13px; border: 1px solid #e7bc5f45; border-radius: 9px; color: #ecc77b; font-size: 12px; font-weight: 600; transition: background .18s, border-color .18s; }
+.relay-toggle:hover { background: #e7bc5f14; border-color: #e7bc5f88; }
+.relay-toggle:focus-visible { outline: 2px solid #e7bc5f; outline-offset: 3px; }
+#relay-details[hidden] { display: none; }
+.relay-summary { margin: 0 0 12px; }
 .relay-connections { display: flex; flex-direction: column; gap: 6px; }
 .connection-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #ffffff0a; border-radius: 11px; background: #ffffff03; transition: background .18s, border-color .18s; }
 .connection-row:hover { background: #ffffff07; border-color: #ffffff14; }

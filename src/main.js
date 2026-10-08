@@ -62,7 +62,7 @@ function mountPlayer(session, account) {
           </div>
         </div>
         <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p></div></div>
-        <section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><span id="relay-count" class="channel-count"></span></div><div id="relay-connections" class="relay-connections"></div></section>
+        ${session.owner ? `<section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><button id="relay-toggle" type="button" class="relay-toggle" aria-controls="relay-details" aria-expanded="false">Mostrar conexiones</button></div><div id="relay-details" hidden><p id="relay-count" class="relay-summary channel-count"></p><div id="relay-connections" class="relay-connections"></div></div></section>` : ''}
       </section>
       <aside class="channel-panel" aria-label="Canales">
         <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">LISTA DE CANALES</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
@@ -111,6 +111,8 @@ function mountPlayer(session, account) {
   let pageUnloading = false;
   let connectionsRefreshPromise = null;
   let connectionsRefreshTimer = null;
+  let connectionsExpanded = false;
+  let connectionsGeneration = 0;
   let retryTimer = null;
   const tabKey = `dorado-tv:tab:${session.slug}`;
   const playbackKey = `dorado-tv:playback:${session.slug}`;
@@ -194,11 +196,13 @@ function mountPlayer(session, account) {
     return String(name || 'Invitado').trim().charAt(0).toLocaleUpperCase('es') || 'I';
   }
   function refreshConnections() {
-    if (document.hidden) return Promise.resolve();
+    if (!session.owner || !connectionsExpanded || document.hidden) return Promise.resolve();
     if (connectionsRefreshPromise) return connectionsRefreshPromise;
+    const generation = connectionsGeneration;
     connectionsRefreshPromise = (async () => {
       try {
         const data = await inRoom('status');
+        if (generation !== connectionsGeneration) return;
         $('#relay-count').textContent = `${data.active} / ${data.limit ?? '∞'} conexiones`;
         const grouped = new Map();
         for (const connection of data.connections) {
@@ -228,9 +232,9 @@ function mountPlayer(session, account) {
           `;
         }).join('') : `<div class="connection-empty">${iconSvg(Radio, 'h-4 w-4')}<span>Nadie está reproduciendo ahora.</span></div>`;
       } catch {
-        $('#relay-count').textContent = 'Sin conexión';
+        if (generation === connectionsGeneration) $('#relay-count').textContent = 'Sin conexión';
       } finally {
-        connectionsRefreshPromise = null;
+        if (generation === connectionsGeneration) connectionsRefreshPromise = null;
       }
     })();
     return connectionsRefreshPromise;
@@ -241,7 +245,7 @@ function mountPlayer(session, account) {
   }
   function startConnectionsPolling() {
     stopConnectionsPolling();
-    if (document.hidden) return;
+    if (!session.owner || !connectionsExpanded || document.hidden) return;
     connectionsRefreshTimer = setTimeout(async () => {
       await refreshConnections();
       startConnectionsPolling();
@@ -410,7 +414,24 @@ function mountPlayer(session, account) {
   $('#favorites').addEventListener('click', () => { onlyFavorites = !onlyFavorites; $('#favorites').setAttribute('aria-pressed', String(onlyFavorites)); visible = 80; renderChannels(); });
   $('#more').addEventListener('click', () => { visible += 80; renderChannels(); });
   $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
-  $('#relay-connections').addEventListener('click', async (event) => {
+  if (session.owner) $('#relay-toggle').addEventListener('click', () => {
+    connectionsExpanded = !connectionsExpanded;
+    connectionsGeneration += 1;
+    connectionsRefreshPromise = null;
+    $('#relay-toggle').setAttribute('aria-expanded', String(connectionsExpanded));
+    $('#relay-toggle').textContent = connectionsExpanded ? 'Ocultar conexiones' : 'Mostrar conexiones';
+    $('#relay-details').hidden = !connectionsExpanded;
+    if (connectionsExpanded) {
+      $('#relay-count').textContent = 'Cargando conexiones…';
+      refreshConnections();
+      startConnectionsPolling();
+    } else {
+      stopConnectionsPolling();
+      $('#relay-count').textContent = '';
+      $('#relay-connections').replaceChildren();
+    }
+  });
+  $('#relay-connections')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-close-emissions]');
     if (!button) return;
     button.disabled = true;
