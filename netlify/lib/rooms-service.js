@@ -406,10 +406,9 @@ export class RoomsService {
     return { kicked: !alive, expires: this.clock() + LEASE_SECONDS };
   }
   async status(slug, who) {
-    const room = await this.access(slug, who);
+    const room = await this.access(slug, who, true);
     const state = await read(this.store, `leases/room-${slug}`);
     const active = (state?.leases || []).filter((lease) => lease.expires > this.clock() && lease.version === room.version);
-    const owner = room.ownerId === who.account?.id;
     const channels = new Map(parsePlaylist(this.playlist(room)).map((channel) => [channel.id, channel]));
     const programmeByChannel = new Map();
     await Promise.all([...new Set(active.map((lease) => lease.channelId))].map(async (channelId) => {
@@ -422,7 +421,7 @@ export class RoomsService {
       connections: active.map(({ id, name, channelId, channelName }) => {
         const channel = channels.get(channelId);
         return {
-          ...(owner ? { id } : {}),
+          id,
           name,
           channelId,
           channelName,

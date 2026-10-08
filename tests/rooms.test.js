@@ -141,19 +141,23 @@ test('one simultaneous viewer wins the last slot; expired leases release capacit
   assert((await f.service.start(current.slug, visitors[1], { channelId: 1, tab: 'browser-tab-1' })).id);
 });
 
-test('guests can see active channel, programme and viewers without owner controls', async () => {
+test('only room owners can inspect viewers and their current channels', async () => {
   const f = fixture(), who = await owner(f); const current = await room(f, who), visitor = await guest(f);
   await f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-guest' });
-  const guestStatus = await f.service.status(current.slug, visitor);
-  assert.equal(guestStatus.active, 1);
-  assert.deepEqual(guestStatus.connections[0], {
+  await assert.rejects(f.service.status(current.slug, visitor), { status: 403 });
+  await assert.rejects(f.service.status(current.slug, { account: null, guest: null }), { status: 403 });
+  const otherOwner = await owner(f, 'another@example.test');
+  await assert.rejects(f.service.status(current.slug, otherOwner), { status: 403 });
+  const ownerStatus = await f.service.status(current.slug, who);
+  assert.equal(ownerStatus.active, 1);
+  assert.deepEqual(ownerStatus.connections[0], {
+    id: ownerStatus.connections[0].id,
     name: 'Invitado',
     channelId: 1,
     channelName: 'Canal uno',
     channelLogo: 'https://img.example.test/canal-uno.png',
     program: 'Noticias de prueba',
   });
-  const ownerStatus = await f.service.status(current.slug, who);
   assert.equal(typeof ownerStatus.connections[0].id, 'string');
 });
 
