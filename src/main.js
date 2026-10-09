@@ -183,6 +183,7 @@ function mountPlayer(session, account) {
   let vodSession = null;
   let vodNavigation = {};
   let torrentSessionId = null;
+  let vodHlsSessionId = null;
   let directAudioSessionId = null;
   let torrentHeartbeat = null;
   let torrentWait = null;
@@ -277,6 +278,11 @@ function mountPlayer(session, account) {
     playbackToken += 1;
     if (torrentWait) { clearTimeout(torrentWait.id); torrentWait.resolve(); torrentWait = null; }
     if (torrentHeartbeat) { clearInterval(torrentHeartbeat); torrentHeartbeat = null; }
+    if (vodHlsSessionId) {
+      const id = vodHlsSessionId;
+      vodHlsSessionId = null;
+      inRoom('vod-stop', { data: { id }, keepalive: true }).catch(() => {});
+    }
     if (torrentSessionId) {
       const id = torrentSessionId;
       torrentSessionId = null;
@@ -442,7 +448,7 @@ function mountPlayer(session, account) {
     stop();
     const token = playbackToken;
     active = null;
-    vodSession = { source, title, navigation, compatibleAudio, remux: compatibleAudio };
+    vodSession = { source, title, navigation, compatibleAudio, remux: false };
     const canConvertAudio = source?.kind === 'https' &&
       typeof source.url === 'string' && !!source.audioTicket && !/\.m3u8(?:$|[?#])/i.test(source.url);
     $('#vod-audio').hidden = !canConvertAudio;
@@ -460,68 +466,66 @@ function mountPlayer(session, account) {
     setLoading(true);
     setStatus('Preparando reproducción…');
     try {
-      if (source.kind === 'torrent') {
-        if (!source.ticket) throw Error('Fuente torrent sin autorización. Vuelve a buscar el título.');
-        setStatus('Conectando con el motor BitTorrent de esta sala…');
-        const started = await inRoom('torrent-start', { data: { ticket: source.ticket } });
+      if (source.kind === 'torrent' || compatibleAudio) {
+        const ticket = source.kind === 'torrent' ? source.ticket : source.audioTicket;
+        if (!ticket) throw Error('Esta fuente no tiene autorización. Vuelve a buscar la película.');
+        setStatus('Preparando streaming bajo demanda. No es necesario descargar toda la película…');
+        const started = await inRoom('vod-start', { data: { kind: source.kind, ticket } });
         if (token !== playbackToken) {
-          inRoom('torrent-stop', { data: { id: started.id }, keepalive: true }).catch(() => {});
+          inRoom('vod-stop', { data: { id: started.id }, keepalive: true }).catch(() => {});
           return;
         }
-        torrentSessionId = started.id;
+        vodHlsSessionId = started.id;
+        const deadline = Date.now() + 100000;
         let ready = null;
-        const until = Date.now() + 70000;
-        while (token === playbackToken && Date.now() < until) {
-          ready = await inRoom('torrent-status', { data: { id: started.id } });
+        while (token === playbackToken && Date.now() < deadline) {
+          ready = await inRoom('vod-status', { data: { id: started.id } });
           if (ready.state === 'ready') break;
-          setStatus('Buscando pares y metadatos BitTorrent…');
-          await new Promise((resolve) => {
-            const id = setTimeout(resolve, 1900);
-            torrentWait = { id, resolve };
-          });
-          torrentWait = null;
+          if (ready.state === 'failed') throw Error(ready.error || 'No se pudo abrir la fuente.');
+          setStatus('Analizando el vídeo y conectando con la fuente…');
+          await new Promise((resolve) => setTimeout(resolve, 1600));
         }
         if (token !== playbackToken) return;
-        if (ready?.state !== 'ready') throw Error('No se encontraron pares BitTorrent a tiempo. Prueba otra fuente.');
-        vodSession.remux = !!ready.remux;
-        const seekHint = ready.remux ? 'Los saltos de tiempo no están disponibles mientras se convierte MKV.' : '';
-        for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = seekHint;
-        updateVodProgress();
-        video.src = ready.url;
-        setStatus(ready.remux
-          ? 'Convirtiendo MKV a MP4 sin recodificar el vídeo. Espera unos segundos…'
-          : 'Preparando vídeo desde el relay…');
-        torrentHeartbeat = setInterval(() => {
-          if (token === playbackToken && torrentSessionId) {
-            inRoom('torrent-ping', { data: { id: torrentSessionId } }).catch(() => {});
-          }
-        }, 20000);
+        if (ready?.state !== 'ready') throw Error('La fuente tardó demasiado. Prueba otra con más seeders.');
+        setStatus('Streaming VOD listo. Preparando los primeros segundos…');
+        vodSession.remux = false;
+        for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
+        if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = ready.url;
+        else {
+          const { default: Hls } = await import('hls.js');
+          if (token !== playbackToken) return;
+          if (!Hls.isSupported()) throw Error('Tu navegador no admite reproducción HLS.');
+          hls = new Hls({ maxBufferLength: 24, maxMaxBufferLength: 45 });
+          await new Promise((resolve, reject) => {
+            hls.on(Hls.Events.ERROR, (_, details) => {
+              if (!details.fatal) return;
+              if (details.type === Hls.ErrorTypes.NETWORK_ERROR && details.response?.code === 503) {
+                setStatus('El servidor está preparando un segmento. Reintentando…');
+                hls.startLoad();
+                return;
+              }
+              reject(Error('No se pudo reproducir el segmento de vídeo. ' + (details.details || '')));
+              setStatus('No se pudo cargar un segmento del vídeo.', true);
+            });
+            hls.once(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(ready.url));
+            hls.once(Hls.Events.MANIFEST_PARSED, resolve);
+            hls.attachMedia(video);
+          });
+        }
       } else if (source.url) {
-        if (compatibleAudio) {
-          setStatus('Convirtiendo audio a AAC desde el servidor. El vídeo empezará desde el principio…');
-          if (!source.audioTicket) throw Error('Esta fuente no tiene autorización para convertir el audio. Actualiza la búsqueda.');
-          const audio = await inRoom('direct-audio-start', { data: { ticket: source.audioTicket } });
-          if (token !== playbackToken) {
-            inRoom('direct-audio-stop', { data: { id: audio.id }, keepalive: true }).catch(() => {});
-            return;
-          }
-          directAudioSessionId = audio.id;
-          video.src = audio.url;
-        } else {
-          const path = new URL(source.url).pathname.toLowerCase();
-          if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
+        const path = new URL(source.url).pathname.toLowerCase();
+        if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
           const { default: Hls } = await import('hls.js');
           if (token !== playbackToken) return;
           if (!Hls.isSupported()) throw Error('No hay soporte HLS en este navegador.');
           hls = new Hls();
           hls.attachMedia(video);
           await new Promise((resolve, reject) => {
-            hls.once(Hls.Events.MEDIA_ATTACHED, () => { hls.loadSource(source.url); });
+            hls.once(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(source.url));
             hls.once(Hls.Events.MANIFEST_PARSED, resolve);
             hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) reject(Error('No se puede cargar el vídeo.')); });
           });
-          } else video.src = source.url;
-        }
+        } else video.src = source.url;
       } else throw Error('Fuente inválida.');
       if (token !== playbackToken) return;
       try { await video.play(); }
