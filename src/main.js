@@ -6,7 +6,7 @@ import {
   RectangleHorizontal, PanelRightClose, ChevronDown, Radio,
   Maximize, Minimize, Bookmark, TvMinimal, Upload, Check, Cast,
   LogOut, LockKeyhole, X, FileUp, Search,
-  Settings2, DoorOpen, RefreshCw,
+  Settings2, DoorOpen, RefreshCw, SkipBack, SkipForward, RotateCcw, RotateCw,
 } from 'lucide';
 import { groupsFor, parsePlaylist } from './playlist.js';
 import { createAmbientLight } from './ambient.js';
@@ -16,6 +16,7 @@ import { iconSvg, morphSvg, escapeHtml } from './ui.js';
 import { roomApi, navigateRoom } from './room-api.js';
 import { setupRemotePlayback } from './remote-playback.js';
 import { mountRoomAddons } from './stremio-ui.js';
+import { formatPlaybackTime, seekTarget } from './vod-utils.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
 const app = document.querySelector('#app');
@@ -66,8 +67,18 @@ function mountPlayer(session, account) {
               <button id="fullscreen" type="button" title="Pantalla completa" aria-label="Pantalla completa" aria-pressed="false" class="icon-button">${morphSvg(Maximize, 'fullscreen-icon')}</button>
             </div>
           </div>
+          <div id="vod-tools" class="vod-tools" hidden>
+            <input id="vod-seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición de reproducción">
+            <div class="vod-transport">
+              <button id="vod-prev" type="button" disabled aria-label="Episodio anterior" title="Episodio anterior">${iconSvg(SkipBack, 'h-5 w-5')}</button>
+              <button id="vod-back" type="button" disabled aria-label="Retroceder 10 segundos" title="Retroceder 10 segundos">${iconSvg(RotateCcw, 'h-5 w-5')}<small>10</small></button>
+              <output id="vod-clock" for="vod-seek">00:00 / --:--</output>
+              <button id="vod-forward" type="button" disabled aria-label="Avanzar 10 segundos" title="Avanzar 10 segundos">${iconSvg(RotateCw, 'h-5 w-5')}<small>10</small></button>
+              <button id="vod-next" type="button" disabled aria-label="Siguiente episodio" title="Siguiente episodio">${iconSvg(SkipForward, 'h-5 w-5')}</button>
+            </div>
+          </div>
         </div>
-        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p><button id="retry-video" type="button" class="retry-video" hidden aria-label="Reintentar conexión del canal">${iconSvg(RefreshCw, 'h-4 w-4')} Reintentar conexión</button></div></div>
+        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p><div id="relay-health" class="relay-health" role="status" aria-live="polite" hidden><span id="relay-health-text"></span><button type="button" id="relay-health-retry" hidden>Comprobar de nuevo</button></div><button id="retry-video" type="button" class="retry-video" hidden aria-label="Reintentar conexión del canal">${iconSvg(RefreshCw, 'h-4 w-4')} Reintentar conexión</button></div></div>
         ${session.owner ? `<section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><button id="relay-toggle" type="button" class="relay-toggle" aria-controls="relay-details" aria-expanded="false">Mostrar conexiones</button></div><div id="relay-details" hidden><p id="relay-count" class="relay-summary channel-count"></p><div id="relay-connections" class="relay-connections"></div></div></section>` : ''}
       </section>
       <aside class="channel-panel" aria-label="Canales">
@@ -91,10 +102,10 @@ function mountPlayer(session, account) {
     <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Sube un archivo .m3u de hasta 10 MB. Se guardará cifrado para esta sala; la lista actual se conserva si la subida falla.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
   </div>`;
 
-  const cinema = mountRoomAddons(app, session, { stopLive: () => stop() });
+  const cinema = mountRoomAddons(app, session, { player: { play: playVod, setNavigation: setVodNavigation } });
   const showSection = (mode) => {
     const isCinema = mode === 'cinema';
-    app.querySelector('#watch-layout').hidden = isCinema;
+    app.querySelector('#watch-layout').classList.toggle('media-mode-cinema', isCinema);
     app.querySelector('#media-channels').setAttribute('aria-pressed', String(!isCinema));
     app.querySelector('#media-cinema').setAttribute('aria-pressed', String(isCinema));
     if (isCinema) cinema.show();
@@ -122,6 +133,49 @@ function mountPlayer(session, account) {
   let onlyFavorites = false;
   let playbackToken = 0;
   let playbackLease = null;
+  let relayStatus = { configured: true, ready: false };
+  let relayCheckCount = 0;
+  let relayHealthTimer = null;
+  async function probeRelay() {
+    clearTimeout(relayHealthTimer);
+    $('#relay-health').hidden = false;
+    $('#relay-health-retry').hidden = true;
+    $('#relay-health-text').textContent = 'Comprobando servidor de vídeo…';
+    try {
+      const result = await inRoom('relay-health');
+      relayStatus = result;
+      if (!result.configured) {
+        $('#relay-health').hidden = true;
+        return;
+      }
+      if (result.ready) {
+        relayCheckCount = 0;
+        $('#relay-health').classList.remove('is-offline');
+        $('#relay-health-text').textContent = 'Relay de vídeo disponible';
+        relayHealthTimer = setTimeout(() => { $('#relay-health').hidden = true; }, 4500);
+      } else {
+        $('#relay-health').classList.add('is-offline');
+        $('#relay-health-text').textContent = 'El servidor de vídeo está despertando…';
+        if (relayCheckCount++ < 7) relayHealthTimer = setTimeout(probeRelay, 6500);
+        else {
+          $('#relay-health-text').textContent = 'Servidor no disponible. Puedes volver a comprobarlo.';
+          $('#relay-health-retry').hidden = false;
+          relayCheckCount = 0;
+        }
+      }
+    } catch {
+      relayStatus.ready = false;
+      $('#relay-health').classList.add('is-offline');
+      $('#relay-health-text').textContent = 'No se pudo comprobar el relay.';
+      $('#relay-health-retry').hidden = false;
+    }
+  }
+  $('#relay-health-retry').onclick = () => { relayCheckCount = 0; probeRelay(); };
+
+  let vodSession = null;
+  let vodNavigation = {};
+  let torrentClient = null;
+  let torrentTimeout = null;
   let playbackSource = '';
   let releasePending = Promise.resolve();
   let heartbeatPending = false;
@@ -209,6 +263,11 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    if (torrentClient) { const old = torrentClient; torrentClient = null; old.destroy(() => {}); }
+    vodSession = null;
+    vodNavigation = {};
+    $('#vod-tools').hidden = true;
+    $('#playback-badge').textContent = 'EN DIRECTO';
     setConnecting(false);
     $('#retry-video').hidden = true;
     playbackSource = '';
@@ -324,6 +383,86 @@ function mountPlayer(session, account) {
     if (previous) play(previous, { resume: true });
     else clearRememberedPlayback();
   }
+  function setVodNavigation(navigation = {}) {
+    vodNavigation = navigation;
+    $('#vod-prev').disabled = !navigation.previous;
+    $('#vod-next').disabled = !navigation.next;
+  }
+  function updateVodProgress() {
+    if (!vodSession) return;
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    const bounds = video.seekable.length ? { start: video.seekable.start(0), end: video.seekable.end(video.seekable.length - 1) } : null;
+    const canSeek = duration > 0 && bounds && bounds.end > bounds.start;
+    for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).disabled = !canSeek;
+    if (!$('#vod-seek').matches(':active')) $('#vod-seek').value = canSeek ? String(Math.round(1000 * video.currentTime / duration)) : '0';
+    $('#vod-clock').textContent = formatPlaybackTime(video.currentTime) + ' / ' + (duration ? formatPlaybackTime(duration) : '--:--');
+    $('#vod-seek').style.setProperty('--seek-fill', (Number($('#vod-seek').value) / 10) + '%');
+  }
+  function seekVod(seconds) {
+    if (!vodSession || !video.seekable.length) return;
+    const start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
+    const next = seekTarget(video.currentTime, seconds, start, end);
+    if (next !== null) video.currentTime = next;
+  }
+  async function playVod({ source, title, navigation = {} }) {
+    stop();
+    const token = playbackToken;
+    active = null;
+    vodSession = { source, title, navigation };
+    setVodNavigation(navigation);
+    $('#vod-tools').hidden = false;
+    $('#playback-badge').textContent = 'CINE Y SERIES';
+    $('#now-name').textContent = title;
+    $('#empty').classList.add('hidden');
+    $('#retry-video').hidden = true;
+    setConnecting(true);
+    setLoading(true);
+    setStatus('Preparando reproducción…');
+    try {
+      if (source.kind === 'torrent') {
+        const { startBrowserTorrent } = await import('./torrent-playback.js');
+        if (token !== playbackToken) return;
+        const torrent = await startBrowserTorrent(video, source, {
+          onStatus: (message) => { if (token === playbackToken) setStatus(message); },
+          isCurrent: () => token === playbackToken,
+        });
+        if (token !== playbackToken) { torrent.client.destroy(() => {}); return; }
+        torrentClient = torrent.client;
+        await torrent.ready;
+      } else if (source.url) {
+        const path = new URL(source.url).pathname.toLowerCase();
+        if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
+          const { default: Hls } = await import('hls.js');
+          if (token !== playbackToken) return;
+          if (!Hls.isSupported()) throw Error('No hay soporte HLS en este navegador.');
+          hls = new Hls();
+          hls.attachMedia(video);
+          await new Promise((resolve, reject) => {
+            hls.once(Hls.Events.MEDIA_ATTACHED, () => { hls.loadSource(source.url); });
+            hls.once(Hls.Events.MANIFEST_PARSED, resolve);
+            hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) reject(Error('No se puede cargar el vídeo.')); });
+          });
+        } else video.src = source.url;
+      } else throw Error('Fuente inválida.');
+      if (token !== playbackToken) return;
+      try { await video.play(); }
+      catch (error) {
+        if (error.name === 'NotAllowedError') {
+          setConnecting(false); setLoading(false); setStatus('Pulsa Play para reproducir.'); return;
+        }
+        throw error;
+      }
+      if (token !== playbackToken) return;
+      setConnecting(false); setLoading(false); setStatus('');
+      updateVodProgress();
+    } catch (error) {
+      if (token !== playbackToken) return;
+      setConnecting(false); setLoading(false);
+      setStatus(error.message || 'No se pudo iniciar el vídeo.', true);
+      $('#retry-video').hidden = false;
+    }
+  }
+
   async function play(channel, { resume = false } = {}) {
     if (!channel) return;
     stop();
@@ -451,6 +590,11 @@ function mountPlayer(session, account) {
       favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${channel.name}`);
       if (onlyFavorites) setTimeout(renderChannels, 250);
     } else {
+      if (channel.url.startsWith('http:') && relayStatus.configured && !relayStatus.ready) {
+        setStatus('El servidor de vídeo aún no está disponible. Espera o usa «Comprobar de nuevo».', true);
+        probeRelay();
+        return;
+      }
       play(channel);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -459,8 +603,16 @@ function mountPlayer(session, account) {
   $('#category').addEventListener('change', () => { visible = 80; renderChannels(); });
   $('#favorites').addEventListener('click', () => { onlyFavorites = !onlyFavorites; $('#favorites').setAttribute('aria-pressed', String(onlyFavorites)); visible = 80; renderChannels(); });
   $('#more').addEventListener('click', () => { visible += 80; renderChannels(); });
-  $('#retry-video').addEventListener('click', () => { if (active && !connecting) play(active); });
-  $('#play').addEventListener('click', () => { if (connecting) return; if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
+  $('#retry-video').addEventListener('click', () => {
+    if (connecting) return;
+    if (vodSession) { playVod(vodSession); return; }
+    if (active) play(active);
+  });
+  $('#play').addEventListener('click', () => { if (connecting) return; if (vodSession) {
+    if (video.paused) video.play().catch((error) => setStatus(error.message, true));
+    else video.pause();
+    return;
+  } if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
   if (session.owner) $('#relay-toggle').addEventListener('click', () => {
     connectionsExpanded = !connectionsExpanded;
     connectionsGeneration += 1;
@@ -629,7 +781,29 @@ function mountPlayer(session, account) {
   video.addEventListener('pause', () => setPlayIcon(false));
   video.addEventListener('waiting', () => setLoading(true));
   video.addEventListener('playing', () => { setConnecting(false); setLoading(false); });
+  ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'seeking', 'seeked'].forEach((type) =>
+    video.addEventListener(type, updateVodProgress));
+  $('#vod-prev').onclick = () => vodNavigation.previous?.();
+  $('#vod-next').onclick = () => vodNavigation.next?.();
+  $('#vod-back').onclick = () => seekVod(-10);
+  $('#vod-forward').onclick = () => seekVod(10);
+  $('#vod-seek').oninput = () => {
+    if (!vodSession || !Number.isFinite(video.duration)) return;
+    $('#vod-clock').textContent = formatPlaybackTime(video.duration * Number($('#vod-seek').value) / 1000) + ' / ' + formatPlaybackTime(video.duration);
+  };
+  $('#vod-seek').onchange = () => {
+    if (!vodSession || !video.seekable.length || !Number.isFinite(video.duration)) return;
+    const start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
+    video.currentTime = Math.min(end, Math.max(start, video.duration * Number($('#vod-seek').value) / 1000));
+    updateVodProgress();
+  };
   video.addEventListener('error', () => {
+    if (vodSession && !pageUnloading) {
+      setConnecting(false); setLoading(false);
+      setStatus('La reproducción se interrumpió.', true);
+      $('#retry-video').hidden = false;
+      return;
+    }
     if (!active || pageUnloading) return;
     if (hls) return;
     clearRememberedPlayback();
@@ -671,7 +845,13 @@ function mountPlayer(session, account) {
     stopConnectionsPolling();
     document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, { once: true });
-  video.addEventListener('ended', () => { clearRememberedPlayback(); stop(); setStatus('La emisión ha terminado.'); });
+  video.addEventListener('ended', () => {
+    if (vodSession) {
+      if (vodNavigation.next) { vodNavigation.next(); return; }
+      setStatus('Reproducción terminada.'); return;
+    }
+    clearRememberedPlayback(); stop(); setStatus('La emisión ha terminado.');
+  });
   refreshConnections();
   startConnectionsPolling();
 
@@ -731,6 +911,8 @@ function mountPlayer(session, account) {
   }) : null;
   window.addEventListener('pagehide', () => settings?.destroy(), { once: true });
 
+  probeRelay();
+  window.addEventListener('pagehide', () => clearTimeout(relayHealthTimer), { once: true });
   if (session.hasPlaylist) loadPlaylist();
   else setStatus(session.owner ? 'Sube un archivo .m3u para añadir canales.' : 'El propietario todavía no ha subido la lista de esta sala.');
 }

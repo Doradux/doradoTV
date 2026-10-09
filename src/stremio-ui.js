@@ -1,528 +1,240 @@
-import { Film, Puzzle, X, Search, Play, Pause, RotateCcw, RotateCw, Volume2, Maximize, ArrowLeft, Trash2, Plus } from 'lucide';
+import { Film, Puzzle, Search, Play, ArrowLeft, Trash2, Plus, X } from 'lucide';
 import { iconSvg, escapeHtml } from './ui.js';
+import { seasonGroups } from './vod-utils.js';
 import './stremio.css';
-import { formatPlaybackTime, seasonGroups, seekTarget } from './vod-utils.js';
-
 const e = escapeHtml;
-const poster = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="sa-no-poster">${iconSvg(Film)}</div>`;
-const card = (m, i) => `<button type="button" class="sa-card" data-film="${i}">${poster(m)}<span>${e(m.name || 'Sin título')}</span><small>${m.type === 'series' ? 'Serie' : 'Película'} ${e(m.releaseInfo || '')}</small></button>`;
-
+const cover = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="sa-no-poster">${iconSvg(Film)}</span>`;
 async function api(room, action, data) {
-  const search = new URLSearchParams({ room, action });
-  const response = await fetch(`/.netlify/functions/addons?${search}`, {
+  const query = new URLSearchParams({ room, action });
+  const response = await fetch(`/.netlify/functions/addons?${query}`, {
     method: data === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
     ...(data === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room, ...data }) }),
   });
-  let result = null;
-  try { result = await response.json(); } catch {}
-  if (!response.ok) throw new Error(result?.error || `Error consultando addons (${response.status}).`);
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw Error(result.error || `Error al consultar contenido (${response.status}).`);
   return result;
 }
-
-export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
+export function mountRoomAddons(app, session, { player }) {
   const room = session.slug;
-  const header = app.querySelector('.header-actions');
-  if (!header) return;
   const open = document.createElement('button');
-  open.type = 'button';
-  open.className = 'sa-open';
+  open.type = 'button'; open.className = 'sa-open';
   open.innerHTML = `${iconSvg(Puzzle, 'h-4 w-4')}<span>Gestión de addons</span>`;
-  if (session.owner) header.prepend(open);
-
-  const overlay = document.createElement('div');
-  overlay.className = 'sa-cinema-page';
-  overlay.id = 'sa-cinema-page';
-  overlay.hidden = true;
-  overlay.innerHTML = `<section class="sa-dialog" aria-label="Cine y series">
-    <header class="sa-heading">
-      <div class="sa-heading-title">${iconSvg(Film)}<div><strong>Cine y series</strong><small>Explora los catálogos y fuentes compartidos por la sala</small></div></div>
-      <button class="sa-icon" data-act="close" aria-label="Volver a la lista de canales" title="Volver a la lista de canales">${iconSvg(X)}</button>
-    </header>
-    <div class="sa-layout">
-      <div class="sa-main">
-        <div id="sa-browse">
-          <div class="sa-content-switch" role="group" aria-label="Buscar por tipo de contenido"><button type="button" data-kind="movie" aria-pressed="true">Películas</button><button type="button" data-kind="series" aria-pressed="false">Series</button></div>
-          <div class="sa-toolbar">
-            <select id="sa-catalog" aria-label="Elegir catálogo"></select>
-            <form id="sa-search"><input id="sa-search-input" type="search" placeholder="Buscar películas…" maxlength="100" aria-label="Buscar películas o series"><button type="submit" class="sa-icon" aria-label="Buscar">${iconSvg(Search)}</button></form>
-          </div>
-          <p id="sa-message" class="sa-message" role="status"></p>
-          <div id="sa-grid" class="sa-grid"></div>
-          <button id="sa-more" type="button" class="sa-secondary" hidden>Mostrar más</button>
-        </div>
-        <div id="sa-detail" hidden>
-          <button class="sa-back" data-act="back">${iconSvg(ArrowLeft, 'h-4 w-4')} Volver al catálogo</button>
-          <div id="sa-detail-meta"></div>
-          <div class="sa-watch">
-            <div id="sa-episodes"></div>
-            <p id="sa-stream-status" class="sa-message" role="status"></p>
-            <div id="sa-streams" class="sa-streams"></div>
-            <button id="sa-play-selected" type="button" class="sa-primary sa-play-selected" hidden disabled>Elegir una fuente</button>
-            <p id="sa-source-help" class="sa-muted" hidden></p>
-            <div id="sa-player" class="sa-player" hidden>
-              <video id="sa-video" playsinline preload="metadata" tabindex="0" aria-label="Reproductor de películas y series"></video>
-              <div class="sa-playback-controls" aria-label="Controles de reproducción bajo demanda">
-                <input id="sa-timeline" type="range" min="0" max="1000" step="1" value="0" disabled aria-label="Posición en la película o episodio">
-                <div class="sa-playback-row">
-                  <div class="sa-playback-buttons">
-                    <button id="sa-play" type="button" data-act="toggle-play" disabled aria-label="Reproducir" title="Reproducir">${iconSvg(Play, 'h-5 w-5')}</button>
-                    <button type="button" data-seek="-10" disabled aria-label="Retroceder 10 segundos" title="Retroceder 10 segundos">${iconSvg(RotateCcw, 'h-5 w-5')}<span>10</span></button>
-                    <button type="button" data-seek="10" disabled aria-label="Avanzar 10 segundos" title="Avanzar 10 segundos">${iconSvg(RotateCw, 'h-5 w-5')}<span>10</span></button>
-                  </div>
-                  <output id="sa-time" for="sa-timeline">00:00 / --:--</output>
-                  <div class="sa-playback-options"><label for="sa-volume" aria-label="Volumen">${iconSvg(Volume2, 'h-4 w-4')}</label><input id="sa-volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen"><button type="button" data-act="fullscreen" aria-label="Pantalla completa" title="Pantalla completa">${iconSvg(Maximize, 'h-5 w-5')}</button></div>
-                </div>
-              </div>
-            </div>
-            <div id="sa-subtitles"></div>
-          </div>
-        </div>
-      </div>
+  if (session.owner) app.querySelector('.header-actions').prepend(open);
+  const cinema = document.createElement('section');
+  cinema.id = 'sa-cinema-page'; cinema.className = 'sa-cinema-page'; cinema.hidden = true;
+  cinema.innerHTML = `<div class="sa-cinema-head">
+    <div class="sa-cinema-heading">${iconSvg(Film, 'h-5 w-5')}<h2>Cine y series</h2></div>
+    <div class="sa-content-switch" role="group" aria-label="Tipo de contenido">
+      <button type="button" data-kind="movie" aria-pressed="true">Películas</button>
+      <button type="button" data-kind="series" aria-pressed="false">Series</button>
     </div>
-  </section>`;
-  app.querySelector('.app-shell').append(overlay);
+    <form id="sa-search" role="search" class="sa-search">
+      <label class="sr-only" for="sa-search-input">Buscar títulos</label>
+      ${iconSvg(Search, 'h-4 w-4')}
+      <input id="sa-search-input" type="search" placeholder="Buscar películas…" minlength="2" maxlength="100" autocomplete="off">
+      <button type="submit" title="Buscar" aria-label="Buscar">${iconSvg(Search, 'h-4 w-4')}</button>
+    </form></div>
+    <div id="sa-browse" class="sa-browser-stage">
+      <p id="sa-message" class="sa-message" role="status"></p><div id="sa-grid" class="sa-grid"></div>
+    </div>
+    <div id="sa-detail" class="sa-browser-stage" hidden>
+      <button type="button" class="sa-back" data-act="back">${iconSvg(ArrowLeft, 'h-4 w-4')} Resultados</button>
+      <div id="sa-detail-meta"></div><div id="sa-episodes"></div>
+      <p id="sa-stream-status" class="sa-message" role="status"></p>
+      <div id="sa-streams" class="sa-streams"></div>
+    </div>`;
+  app.querySelector('.channel-panel').append(cinema);
   const manage = document.createElement('div');
-  manage.className = 'sa-overlay';
-  manage.hidden = true;
+  manage.className = 'sa-overlay'; manage.hidden = true;
   manage.innerHTML = `<section class="sa-manage-dialog" role="dialog" aria-modal="true" aria-label="Gestión de addons">
-    <header class="sa-heading"><div class="sa-heading-title">${iconSvg(Puzzle)}<div><strong>Gestión de addons</strong><small>Solo el propietario puede instalar o eliminar addons de esta sala</small></div></div>
-    <button type="button" class="sa-icon" data-manage-close aria-label="Cerrar gestión de addons">${iconSvg(X)}</button></header>
-      <aside class="sa-sidebar">
-        <div class="sa-side-title">${iconSvg(Puzzle, 'h-4 w-4')} Addons de la sala</div>
-        <div id="sa-addons" class="sa-addon-list"></div>
-        <form id="sa-install" class="sa-install" hidden>
-          <label for="sa-url">Instalar addon</label>
-          <input id="sa-url" type="text" inputmode="url" placeholder="https://ejemplo.com/manifest.json o stremio://..." maxlength="1500" required autocomplete="off" spellcheck="false">
-          <button type="submit" class="sa-primary">${iconSvg(Plus, 'h-4 w-4')} Instalar</button>
-          <small>Solo el propietario puede modificar los addons. Utiliza fuentes autorizadas y de confianza.</small>
-        </form>
-      </aside>
-    <p id="sa-manage-status" class="sa-message" role="status"></p>
-  </section>`;
+    <header class="sa-heading"><div class="sa-heading-title">${iconSvg(Puzzle)}<div><strong>Gestión de addons</strong></div></div>
+      <button class="sa-icon" data-manage-close aria-label="Cerrar">${iconSvg(X)}</button></header>
+    <div class="sa-sidebar"><div id="sa-addons" class="sa-addon-list"></div>
+      <form id="sa-install" class="sa-install" hidden>
+        <label for="sa-url">Instalar addon</label>
+        <input id="sa-url" type="text" inputmode="url" placeholder="https://.../manifest.json o stremio://..." maxlength="1500" required>
+        <button type="submit" class="sa-primary">${iconSvg(Plus, 'h-4 w-4')} Instalar</button>
+        <small>Utiliza únicamente fuentes autorizadas.</small>
+      </form></div><p id="sa-manage-status" class="sa-message" role="status"></p></section>`;
   app.append(manage);
-  const $ = (selector) => overlay.querySelector(selector) || manage.querySelector(selector);
-  const state = { addons: [], catalogs: [], metas: [], owner: false, kind: 'movie', selected: 0, skip: 0, search: '', current: null, seasons: [], seasonIndex: 0, episodeId: '', streams: [], subtitles: [], lastVideo: '', activeSource: -1, selectedSource: -1 };
-  let hls = null, subtitleObjectUrl = '', browseNonce = 0, streamNonce = 0, detailNonce = 0, scrubbing = false;
-  const video = $('#sa-video');
-  const tell = (message, detail = false) => { $(detail ? '#sa-stream-status' : '#sa-message').textContent = message; };
-  const timeline = $('#sa-timeline');
-  const player = $('#sa-player');
-  video.volume = Number($('#sa-volume').value);
-
-  function seekBounds() {
-    if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.seekable.length) return null;
-    const start = Math.max(0, video.seekable.start(0));
-    const end = Math.min(video.duration, video.seekable.end(video.seekable.length - 1));
-    return end > start ? { start, end } : null;
-  }
-
-  function updatePlaybackControls() {
-    const hasSource = state.activeSource >= 0;
-    const bounds = seekBounds();
-    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
-    $('#sa-play').disabled = !hasSource;
-    $('#sa-play').innerHTML = video.paused ? iconSvg(Play, 'h-5 w-5') : iconSvg(Pause, 'h-5 w-5');
-    $('#sa-play').title = video.paused ? 'Reproducir' : 'Pausar';
-    $('#sa-play').setAttribute('aria-label', $('#sa-play').title);
-    timeline.disabled = !hasSource || !bounds;
-    overlay.querySelectorAll('[data-seek]').forEach((button) => { button.disabled = !hasSource || !bounds; });
-    if (!scrubbing) timeline.value = duration ? String(Math.round(Math.min(video.currentTime / duration, 1) * 1000)) : '0';
-    $('#sa-time').textContent = `${formatPlaybackTime(video.currentTime)} / ${duration ? formatPlaybackTime(duration) : '--:--'}`;
-    timeline.style.setProperty('--seek-fill', `${timeline.value / 10}%`);
-  }
-
-  function seekBy(seconds) {
-    const bounds = seekBounds();
-    if (!bounds) return;
-    const target = seekTarget(video.currentTime, seconds, bounds.start, bounds.end);
-    if (target !== null) video.currentTime = target;
-    updatePlaybackControls();
-  }
-
-  const stopVideo = () => {
-    video.pause();
-    hls?.destroy(); hls = null;
-    video.removeAttribute('src');
-    video.querySelectorAll('track').forEach((t) => t.remove());
-    video.load();
-    if (subtitleObjectUrl) URL.revokeObjectURL(subtitleObjectUrl);
-    subtitleObjectUrl = '';
-    scrubbing = false;
-    player.hidden = true;
-    state.activeSource = -1;
-    updatePlaybackControls();
-  };
-  const catalogLabel = (c) => `${c.addon.manifest.name} · ${c.catalog.name}`;
-  const addOnMarkup = (addon) => `<div class="sa-addon"><div><strong>${e(addon.manifest.name)}</strong><small>${e(addon.manifest.description || addon.manifest.id)}</small></div>${state.owner ? `<button type="button" title="Eliminar addon" aria-label="Eliminar ${e(addon.manifest.name)}" data-remove="${e(addon.id)}">${iconSvg(Trash2, 'h-4 w-4')}</button>` : ''}</div>`;
-
-  function renderCatalogs() {
-    state.catalogs = state.addons.flatMap((addon) => addon.manifest.catalogs
-      .filter((catalog) => catalog.type === state.kind && !catalog.required)
-      .map((catalog) => ({ addon, catalog })));
-    $('#sa-catalog').innerHTML = state.catalogs.length
-      ? state.catalogs.map((c, i) => `<option value="${i}">${e(catalogLabel(c))}</option>`).join('')
-      : '<option value="">No hay catálogos de este tipo</option>';
-    state.selected = 0;
-    overlay.querySelectorAll('[data-kind]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.kind === state.kind)));
-    const input = $('#sa-search-input');
-    input.placeholder = state.kind === 'movie' ? 'Buscar películas…' : 'Buscar series…';
-    input.setAttribute('aria-label', input.placeholder);
-  }
-
+  const $ = (sel) => cinema.querySelector(sel) || manage.querySelector(sel);
+  const state = { addons: [], owner: false, type: 'movie', query: '', metas: [], current: null,
+    seasons: [], episodeId: '', streams: [], searchToken: 0, detailToken: 0, streamToken: 0, loaded: false };
+  const visible = () => !cinema.hidden;
+  const say = (message, detail = false) => { $(detail ? '#sa-stream-status' : '#sa-message').textContent = message; };
+  const cards = (metas) => metas.map((m, i) => `<button class="sa-card" type="button" data-film="${i}" style="--card-index:${Math.min(i, 24)}">
+    ${cover(m)}<span>${e(m.name || 'Sin título')}</span>
+    <small>${m.type === 'series' ? 'Serie' : 'Película'}</small></button>`).join('');
   function renderAddons() {
     $('#sa-install').hidden = !state.owner;
-    $('#sa-addons').innerHTML = state.addons.length
-      ? state.addons.map(addOnMarkup).join('')
-      : '<p class="sa-muted">Aún no hay addons instalados.</p>';
-    renderCatalogs();
+    $('#sa-addons').innerHTML = state.addons.length ? state.addons.map((a) =>
+      `<div class="sa-addon"><div><strong>${e(a.manifest.name)}</strong><small>${e(a.manifest.description || '')}</small></div>
+      ${state.owner ? `<button type="button" data-remove="${e(a.id)}" aria-label="Eliminar ${e(a.manifest.name)}">${iconSvg(Trash2, 'h-4 w-4')}</button>` : ''}</div>`
+    ).join('') : '<p class="sa-muted">No hay addons instalados.</p>';
   }
-
   async function refresh() {
     const response = await api(room, 'list');
-    state.addons = response.addons;
-    state.owner = response.owner;
-    renderAddons();
-    if (!overlay.hidden) await browse();
+    state.addons = response.addons; state.owner = response.owner; state.loaded = true; renderAddons();
   }
-
-  async function browse(append = false) {
-    const current = ++browseNonce, query = state.search.trim();
-    const selection = state.catalogs[state.selected];
-    if (!query && !selection) {
-      state.metas = [];
-      $('#sa-grid').innerHTML = '<p class="sa-muted">Instala un addon con catálogo (por ejemplo Cinemeta). Los addons que solo ofrecen streams no sirven para buscar títulos.</p>';
-      $('#sa-more').hidden = true; tell(''); return;
+  async function browse() {
+    const token = ++state.searchToken, query = state.query.trim();
+    if (query.length < 2) {
+      say(query ? 'Escribe al menos dos caracteres.' : '');
+      $('#sa-grid').innerHTML = '<p class="sa-muted">Busca una película o serie.</p>';
+      return;
     }
-    tell(query ? 'Buscando en todos los motores de los addons de la sala…' : 'Cargando catálogo…');
+    say('Buscando…');
+    $('#sa-grid').classList.add('is-loading');
     try {
-      if (!query && selection.catalog.searchRequired) {
-        tell('Introduce un título en el buscador para consultar este catálogo.');
-        $('#sa-grid').innerHTML = ''; $('#sa-more').hidden = true; return;
-      }
-      const data = query
-        ? await api(room, 'search', { type: state.kind, search: query })
-        : await api(room, 'catalog', { addonId: selection.addon.id, type: selection.catalog.type,
-          catalogId: selection.catalog.id, skip: append ? state.skip : 0 });
-      if (current !== browseNonce || overlay.hidden) return;
-      const metas = query ? data.metas : data.metas.map((m) => ({ ...m, addonId: selection.addon.id }));
-      state.metas = append && !query ? state.metas.concat(metas) : metas;
-      state.skip = append && !query ? state.skip + 100 : 100;
-      $('#sa-grid').innerHTML = state.metas.length ? state.metas.map(card).join('') : '<p class="sa-muted">No se han encontrado títulos en los catálogos disponibles.</p>';
-      $('#sa-more').hidden = !!query || !selection?.catalog?.paginated || metas.length < 20;
-      tell(query ? `Encontrados ${state.metas.length} títulos entre ${data.engines} motores.${data.warnings?.length ? ` ${data.warnings.length} motores no respondieron.` : ''}`
-        : `${state.metas.length} títulos mostrados`);
-    } catch (err) {
-      if (current !== browseNonce) return;
-      tell(err.message); if (!append) $('#sa-grid').innerHTML = '';
-      $('#sa-more').hidden = true;
+      const data = await api(room, 'search', { type: state.type, search: query });
+      if (token !== state.searchToken || !visible()) return;
+      state.metas = data.metas;
+      $('#sa-grid').innerHTML = cards(state.metas) || '<p class="sa-muted">No hay resultados.</p>';
+      say(state.metas.length ? '' : 'No se encontraron títulos.');
+    } catch (error) {
+      if (token === state.searchToken) say(error.message);
+    } finally { if (token === state.searchToken) $('#sa-grid').classList.remove('is-loading'); }
+  }
+  function swap(detail) {
+    $('#sa-browse').hidden = detail; $('#sa-detail').hidden = !detail;
+    const target = detail ? $('#sa-detail') : $('#sa-browse');
+    target.classList.remove('is-entering'); void target.offsetWidth; target.classList.add('is-entering');
+  }
+  const episodes = () => state.seasons.flatMap((group) => group.episodes);
+  const navigation = () => {
+    const list = episodes(), i = list.findIndex((ep) => ep.id === state.episodeId);
+    return { previous: i > 0 ? () => chooseEpisode(list[i - 1].id, { autoplay: true }) : null,
+      next: i >= 0 && i < list.length - 1 ? () => chooseEpisode(list[i + 1].id, { autoplay: true }) : null };
+  };
+  function drawEpisodes() {
+    if (!state.seasons.length) { $('#sa-episodes').replaceChildren(); player.setNavigation({}); return; }
+    const group = state.seasons.find((s) => s.episodes.some((ep) => ep.id === state.episodeId)) || state.seasons[0];
+    $('#sa-episodes').innerHTML = `<label class="sa-seasons" for="sa-season"><span>Temporada</span>
+      <select id="sa-season">${state.seasons.map((s) =>
+        `<option value="${s.season}" ${s === group ? 'selected' : ''}>${e(s.label)}</option>`).join('')}</select></label>
+      <div class="sa-episode-list">${group.episodes.map((ep) =>
+        `<button type="button" class="sa-episode ${ep.id === state.episodeId ? 'is-active' : ''}" data-episode="${e(ep.id)}" aria-pressed="${ep.id === state.episodeId}">
+          <span><small>${Number.isInteger(ep.episode) ? `E${ep.episode}` : ''}</small><strong>${e(ep.title || 'Episodio')}</strong></span></button>`).join('')}</div>`;
+    player.setNavigation(navigation());
+  }
+  async function chooseEpisode(id, { autoplay = false } = {}) {
+    if (!episodes().some((ep) => ep.id === id)) return;
+    state.episodeId = id;
+    drawEpisodes();
+    await loadStreams(id);
+    if (autoplay) {
+      const index = state.streams.findIndex((source) => source.supported || (source.kind === 'torrent' && source.infoHash));
+      if (index >= 0) await playSource(index);
     }
   }
-
-  function renderEpisodes() {
-    const group = state.seasons[state.seasonIndex];
-    if (!group) return;
-    $('#sa-season').value = String(group.season);
-    $('#sa-episode-list').innerHTML = group.episodes.map((ep, index) => {
-      const active = ep.id === state.episodeId;
-      const number = Number.isInteger(ep.episode) ? `E${ep.episode}` : `${index + 1}`;
-      return `<button type="button" class="sa-episode ${active ? 'is-active' : ''}" data-episode="${e(ep.id)}" aria-pressed="${active}">
-        ${ep.thumbnail ? `<img src="${e(ep.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
-        <span><small>${e(number)}</small><strong>${e(ep.title || `Episodio ${index + 1}`)}</strong></span>
-        ${active ? iconSvg(Play, 'h-4 w-4') : ''}
-      </button>`;
-    }).join('');
-  }
-
-  async function chooseEpisode(id) {
-    if (!state.seasons[state.seasonIndex]?.episodes.some((ep) => ep.id === id)) return;
-    state.episodeId = id;
-    renderEpisodes();
-    await loadStreams(id);
-  }
-
   async function detail(index) {
-    const ticket = ++detailNonce;
     const preview = state.metas[index];
     if (!preview) return;
-    stopVideo(); ++streamNonce;
-    state.current = preview;
-    state.seasons = [];
-    state.episodeId = '';
-    $('#sa-browse').hidden = true;
-    $('#sa-detail').hidden = false;
-    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${poster(preview)}<div><h2>${e(preview.name)}</h2><p>${e(preview.description || '')}</p><small>${preview.type === 'series' ? 'Serie' : 'Película'} · ${e(preview.releaseInfo || '')}</small></div></div>`;
-    $('#sa-episodes').innerHTML = '';
-    $('#sa-streams').innerHTML = '';
-    $('#sa-subtitles').innerHTML = '';
-    tell('Cargando información…', true);
+    const token = ++state.detailToken; ++state.streamToken;
+    state.current = preview; state.seasons = []; state.episodeId = '';
+    player.setNavigation({});
+    swap(true);
+    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${cover(preview)}<div><h2>${e(preview.name)}</h2></div></div>`;
+    $('#sa-episodes').replaceChildren(); $('#sa-streams').replaceChildren(); say('Cargando…', true);
     let info = preview;
-    try { info = (await api(room, 'meta', { addonId: preview.addonId, type: preview.type, id: preview.id })).meta; }
-    catch { /* Un addon sin metadatos aún puede ofrecer reproducción de películas. */ }
-    if (ticket !== detailNonce || state.current !== preview || overlay.hidden) return;
-    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${poster(info)}<div><h2>${e(info.name || preview.name)}</h2><p>${e(info.description || preview.description || '')}</p><small>${preview.type === 'series' ? 'Serie' : 'Película'} · ${e(info.releaseInfo || '')}</small></div></div>`;
+    try { info = (await api(room, 'meta', { addonId: preview.addonId, type: preview.type, id: preview.id })).meta || preview; }
+    catch { /* Partial metadata is still useful. */ }
+    if (token !== state.detailToken || !visible()) return;
+    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${cover(info)}<div><h2>${e(info.name || preview.name)}</h2>
+      <small>${e(info.releaseInfo || '')}</small><p>${e(info.description || '')}</p></div></div>`;
     state.seasons = preview.type === 'series' ? seasonGroups(info.videos) : [];
+    if (preview.type === 'series' && !state.seasons.length) { say('No hay episodios disponibles.', true); return; }
     if (state.seasons.length) {
-      state.seasonIndex = 0;
       state.episodeId = state.seasons[0].episodes[0].id;
-      $('#sa-episodes').innerHTML = `<div class="sa-seasons"><label for="sa-season">Temporada</label><select id="sa-season" aria-label="Seleccionar temporada">${state.seasons.map((group) => `<option value="${group.season}">${e(group.label)} · ${group.episodes.length} episodios</option>`).join('')}</select></div><div id="sa-episode-list" class="sa-episode-list" aria-label="Episodios de la temporada"></div>`;
-      renderEpisodes();
+      drawEpisodes();
       await loadStreams(state.episodeId);
-    } else if (preview.type === 'movie') {
-      await loadStreams(info.id || preview.id);
-    } else {
-      tell('Este addon no proporciona temporadas o episodios para la serie.', true);
-    }
+    } else await loadStreams(info.id || preview.id);
   }
-
   async function loadStreams(id) {
-    const current = ++streamNonce;
-    state.lastVideo = id;
-    stopVideo();
-    state.streams = [];
-    state.selectedSource = -1;
-    $('#sa-play-selected').hidden = true;
-    $('#sa-source-help').hidden = true;
-    $('#sa-subtitles').innerHTML = '';
-    $('#sa-streams').innerHTML = '';
-    tell('Buscando fuentes de reproducción…', true);
+    const token = ++state.streamToken;
+    $('#sa-streams').replaceChildren(); say('Buscando fuentes…', true);
     try {
-      const { streams, warnings = [] } = await api(room, 'streams', { type: state.current.type, id });
-      if (current !== streamNonce) return;
-      state.streams = [...streams].sort((a, b) => (b.seeders ?? -1) - (a.seeders ?? -1));
-      const hasStreamAddon = state.addons.some((addon) => addon.manifest.resources.some((resource) => resource.name === 'stream' && resource.types.includes(state.current.type)));
-      $('#sa-streams').innerHTML = streams.length
-        ? state.streams.map((s, i) => `<button type="button" class="sa-source" data-source="${i}" aria-pressed="false">
-            ${iconSvg(Play, 'h-4 w-4')}<span><strong>${e(s.name)}</strong>
-            <small>${e(s.title || (s.supported ? 'Vídeo directo' : s.kind === 'torrent' ? 'Fuente BitTorrent' : `Formato ${s.kind}`))}</small>
-            <small class="sa-source-meta">${s.seeders !== null ? `${s.seeders.toLocaleString('es')} seeders · ` : ''}${s.kind === 'torrent' ? 'Torrent · Requiere un cliente externo' : s.supported ? 'Reproducible aquí' : 'No compatible con el navegador'}</small></span></button>`).join('')
-        : `<p class="sa-muted">${hasStreamAddon ? 'Los addons de reproducción instalados no devolvieron fuentes para este título.' : 'Instala un addon que proporcione fuentes de reproducción autorizadas. Los catálogos como Cinemeta solo ofrecen información.'}</p>`;
-      if (warnings.length) $('#sa-streams').insertAdjacentHTML('beforeend', `<p class="sa-muted sa-addon-warnings">${warnings.map((warning) => `${e(warning.addon)}: ${e(warning.reason)}`).join(' · ')}</p>`);
-      tell(state.streams.length ? 'Elige una fuente. Los seeders indican usuarios que comparten cada torrent; no se elige un peer individual.' : warnings.length ? 'Algunos addons no responden; consulta el detalle.' : 'No hay fuentes disponibles.', true);
-
-    } catch (error) { if (current === streamNonce) tell(error.message, true); }
+      const response = await api(room, 'streams', { type: state.current.type, id });
+      if (token !== state.streamToken || !visible()) return;
+      state.streams = response.streams.sort((a, b) => (b.seeders ?? -1) - (a.seeders ?? -1));
+      $('#sa-streams').innerHTML = state.streams.map((s, i) =>
+        `<button class="sa-source" type="button" data-source="${i}" style="--card-index:${Math.min(i, 24)}">
+          ${iconSvg(Play, 'h-4 w-4')}<span><strong>${e(s.name)}</strong>
+          <small>${e(s.title || (s.kind === 'torrent' ? 'Torrent' : 'Vídeo'))}</small>
+          ${s.seeders == null ? '' : `<small>${s.seeders.toLocaleString('es')} seeders</small>`}</span></button>`).join('') ||
+          '<p class="sa-muted">No hay fuentes disponibles.</p>';
+      say(!state.streams.length && response.warnings?.length ? 'No se han podido cargar las fuentes.' : '', true);
+    } catch (error) { if (token === state.streamToken) say(error.message, true); }
   }
-
-  function selectSource(index) {
-    const source = state.streams[index];
-    if (!source) return;
-    state.selectedSource = index;
-    $('#sa-streams').querySelectorAll('[data-source]').forEach((button) =>
-      button.setAttribute('aria-pressed', String(Number(button.dataset.source) === index)));
-    const action = $('#sa-play-selected'), help = $('#sa-source-help');
-    action.hidden = false; help.hidden = false;
-    action.disabled = !(source.supported || (source.kind === 'torrent' && source.infoHash));
-    action.textContent = source.supported ? 'Reproducir fuente seleccionada'
-      : source.kind === 'torrent' && source.infoHash ? 'Abrir torrent en cliente externo' : 'Formato no compatible';
-    help.textContent = source.kind === 'torrent'
-      ? 'DoradoTV no reproduce torrents desde Netlify. Puedes abrir esta fuente con un cliente torrent de tu dispositivo, sujeto a tus derechos de uso.'
-      : source.supported ? 'La reproducción directa se iniciará en el navegador.' : 'Este formato no puede reproducirse directamente.';
-  }
-
   async function playSource(index) {
     const source = state.streams[index];
-    if (!source?.supported) return;
-    const nonce = ++streamNonce;
-    stopVideo();
-    state.activeSource = index;
-    player.hidden = false;
-    updatePlaybackControls();
-    stopLive();
-    const path = new URL(source.url).pathname.toLowerCase();
-    try {
-      if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
-        const { default: Hls } = await import('hls.js');
-        if (nonce !== streamNonce || overlay.hidden) return;
-        if (!Hls.isSupported()) throw new Error('Este navegador no soporta HLS.');
-        hls = new Hls();
-        const instance = hls;
-        await new Promise((resolve, reject) => {
-          const onParsed = () => { instance.off(Hls.Events.ERROR, onError); resolve(); };
-          const onError = (_event, data) => { if (data.fatal) { instance.off(Hls.Events.MANIFEST_PARSED, onParsed); reject(new Error('No se pudo cargar HLS.')); } };
-          instance.once(Hls.Events.MANIFEST_PARSED, onParsed);
-          instance.on(Hls.Events.ERROR, onError);
-          instance.attachMedia(video);
-          instance.loadSource(source.url);
-        });
-      } else video.src = source.url;
-      if (nonce !== streamNonce || overlay.hidden) return;
-      video.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      await video.play();
-      if (nonce !== streamNonce || overlay.hidden) return;
-      tell(`Reproduciendo ${source.name}`, true);
-      const { subtitles } = await api(room, 'subtitles', { type: state.current.type, id: state.lastVideo });
-      if (nonce !== streamNonce || overlay.hidden) return;
-      state.subtitles = [...source.subtitles, ...subtitles];
-      $('#sa-subtitles').innerHTML = state.subtitles.length ? `<label class="sa-episode-label">Subtítulos <select id="sa-subtitle"><option value="">Desactivados</option>${state.subtitles.map((s, i) => `<option value="${i}">${e(s.lang || 'Subtítulo')} · ${e(s.id || 'archivo')}</option>`).join('')}</select></label>` : '';
-    } catch (error) {
-      tell(`No se pudo iniciar la reproducción: ${error.message}`, true);
-    }
+    if (!source || !state.current) return;
+    if (source.kind !== 'torrent' && !source.supported) { say('Formato no reproducible en el navegador.', true); return; }
+    if (source.kind === 'torrent' && !source.infoHash) { say('La fuente torrent no contiene un identificador válido.', true); return; }
+    $('#sa-streams').querySelectorAll('[data-source]').forEach((b) =>
+      b.setAttribute('aria-pressed', String(Number(b.dataset.source) === index)));
+    const title = state.current.type === 'series'
+      ? `${state.current.name} · ${episodes().find((ep) => ep.id === state.episodeId)?.title || 'Episodio'}`
+      : state.current.name;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try { await player.play({ source, title, navigation: state.current.type === 'series' ? navigation() : {} }); say('', true); }
+    catch (err) { say(err.message, true); }
   }
-
-  async function chooseSubtitle(value) {
-    video.querySelectorAll('track').forEach((t) => t.remove());
-    if (subtitleObjectUrl) URL.revokeObjectURL(subtitleObjectUrl);
-    subtitleObjectUrl = '';
-    if (value === '') return;
-    const sub = state.subtitles[Number(value)];
-    if (!sub) return;
-    try {
-      const response = await fetch(sub.url, { mode: 'cors', credentials: 'omit' });
-      if (!response.ok) throw new Error('descarga fallida');
-      const text = await response.text();
-      if (text.length > 350000) throw new Error('subtítulo demasiado grande');
-      const vtt = /^WEBVTT/i.test(text.trimStart()) ? text : 'WEBVTT\n\n' + text.replace(/^(\d+)\s*$/gm, '').replace(/(\d\d:\d\d:\d\d),(\d{3})/g, '$1.$2');
-      subtitleObjectUrl = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
-      const track = document.createElement('track');
-      track.kind = 'subtitles'; track.label = sub.lang || 'Subtítulos'; track.src = subtitleObjectUrl;
-      track.default = true;
-      video.append(track);
-      track.addEventListener('load', () => { if (track.track) track.track.mode = 'showing'; }, { once: true });
-    } catch {
-      tell('No se pudo cargar el subtítulo (el servidor externo puede bloquear CORS).', true);
-    }
+  function show() {
+    cinema.hidden = false;
+    if (!state.loaded) refresh().catch((err) => say(err.message));
+    if (!state.query) $('#sa-grid').innerHTML = '<p class="sa-muted">Busca una película o serie.</p>';
   }
-
-  const closeManagement = () => {
-    manage.hidden = true;
-    document.body.style.overflow = '';
-    open.focus();
-  };
+  function hide() { cinema.hidden = true; ++state.searchToken; ++state.detailToken; ++state.streamToken; }
+  $('#sa-search').onsubmit = (event) => { event.preventDefault(); state.query = $('#sa-search-input').value; browse(); };
+  cinema.addEventListener('click', async (event) => {
+    const kind = event.target.closest('[data-kind]');
+    if (kind && kind.dataset.kind !== state.type) {
+      state.type = kind.dataset.kind; state.query = ''; state.metas = [];
+      $('#sa-search-input').value = '';
+      $('#sa-search-input').placeholder = state.type === 'movie' ? 'Buscar películas…' : 'Buscar series…';
+      cinema.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b === kind)));
+      swap(false); browse(); return;
+    }
+    if (event.target.closest('[data-act="back"]')) { ++state.detailToken; ++state.streamToken; swap(false); return; }
+    const film = event.target.closest('[data-film]');
+    if (film) return detail(Number(film.dataset.film));
+    const episode = event.target.closest('[data-episode]');
+    if (episode) return chooseEpisode(episode.dataset.episode);
+    const source = event.target.closest('[data-source]');
+    if (source) return playSource(Number(source.dataset.source));
+  });
+  cinema.addEventListener('change', (event) => {
+    if (event.target.id === 'sa-season') {
+      const group = state.seasons.find((s) => String(s.season) === event.target.value);
+      if (group?.episodes.length) chooseEpisode(group.episodes[0].id);
+    }
+  });
+  const closeManage = () => { manage.hidden = true; document.body.style.overflow = ''; open.focus(); };
   open.onclick = async () => {
-    manage.hidden = false;
-    document.body.style.overflow = 'hidden';
-    $('#sa-manage-status').textContent = 'Cargando addons de la sala…';
-    try { await refresh(); $('#sa-manage-status').textContent = ''; }
-    catch (error) { $('#sa-manage-status').textContent = error.message; }
+    manage.hidden = false; document.body.style.overflow = 'hidden'; $('#sa-manage-status').textContent = '';
+    try { await refresh(); } catch (err) { $('#sa-manage-status').textContent = err.message; }
   };
   manage.addEventListener('click', async (event) => {
-    if (event.target === manage || event.target.closest('[data-manage-close]')) { closeManagement(); return; }
-    const remove = event.target.closest('[data-remove]');
-    if (remove && state.owner && confirm('¿Eliminar este addon de la sala?')) {
-      try { await api(room, 'remove', { addonId: remove.dataset.remove }); await refresh(); $('#sa-manage-status').textContent = 'Addon eliminado.'; }
-      catch (error) { $('#sa-manage-status').textContent = error.message; }
+    if (event.target === manage || event.target.closest('[data-manage-close]')) return closeManage();
+    const button = event.target.closest('[data-remove]');
+    if (button && state.owner && confirm('¿Eliminar este addon?')) {
+      try {
+        await api(room, 'remove', { addonId: button.dataset.remove });
+        await refresh(); $('#sa-manage-status').textContent = 'Addon eliminado.';
+      } catch (err) { $('#sa-manage-status').textContent = err.message; }
     }
   });
-  manage.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') { event.stopPropagation(); closeManagement(); }
-  });
-  const close = () => app.querySelector('#media-channels').click();
-  overlay.addEventListener('click', async (event) => {
-    if (event.target === overlay || event.target.closest('[data-act="close"]')) { close(); return; }
-    if (event.target.closest('[data-act="back"]')) {
-      ++streamNonce; ++detailNonce; stopVideo(); $('#sa-detail').hidden = true; $('#sa-browse').hidden = false; state.current = null; return;
-    }
-    const switcher = event.target.closest('[data-kind]');
-    if (switcher && state.kind !== switcher.dataset.kind) {
-      state.kind = switcher.dataset.kind;
-      state.search = '';
-      $('#sa-search-input').value = '';
-      renderCatalogs();
-      browse();
-      return;
-    }
-    const seek = event.target.closest('[data-seek]');
-    if (seek) { seekBy(Number(seek.dataset.seek)); return; }
-    const action = event.target.closest('[data-act]');
-    if (action?.dataset.act === 'toggle-play') {
-      if (!state.streams[state.activeSource]?.supported) return;
-      if (video.paused) video.play().catch((error) => tell(`No se pudo reproducir: ${error.message}`, true));
-      else video.pause();
-      return;
-    }
-    if (action?.dataset.act === 'fullscreen') {
-      if (document.fullscreenElement === player) document.exitFullscreen?.();
-      else player.requestFullscreen?.().catch(() => tell('No se pudo activar pantalla completa.', true));
-      return;
-    }
-    const episode = event.target.closest('[data-episode]');
-    if (episode) { await chooseEpisode(episode.dataset.episode); return; }
-    const film = event.target.closest('[data-film]');
-    if (film) { await detail(Number(film.dataset.film)); return; }
-    const source = event.target.closest('[data-source]');
-    if (source) { selectSource(Number(source.dataset.source)); return; }
-
-  });
-  overlay.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.stopPropagation(); close(); } });
-  $('#sa-catalog').onchange = (event) => { state.selected = Number(event.target.value); state.search = ''; $('#sa-search-input').value = ''; browse(); };
-  $('#sa-search').onsubmit = (event) => { event.preventDefault(); state.search = $('#sa-search-input').value; browse(); };
-  $('#sa-more').onclick = () => browse(true);
-  $('#sa-play-selected').onclick = async () => {
-    const index = state.selectedSource, source = state.streams[index];
-    if (!source) return;
-    if (source.supported) { await playSource(index); return; }
-    if (source.kind === 'torrent' && source.infoHash) {
-      const name = encodeURIComponent(state.current?.name || source.name || 'video');
-      window.location.href = `magnet:?xt=urn:btih:${source.infoHash}&dn=${name}`;
-    }
-  };
+  manage.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeManage(); });
   $('#sa-install').onsubmit = async (event) => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('button'), input = $('#sa-url');
-    button.disabled = true; $('#sa-manage-status').textContent = 'Comprobando e instalando addon…';
+    button.disabled = true; $('#sa-manage-status').textContent = 'Instalando…';
     try {
-      const url = input.value.trim().replace(/^stremio:\/\//i, 'https://');
-      const { addon } = await api(room, 'install', { url });
-      input.value = '';
-      await refresh();
-      $('#sa-manage-status').textContent = addon.manifest.catalogs.length
-        ? 'Addon instalado correctamente.'
-        : 'Addon instalado. Solo proporciona fuentes de reproducción; instala también un catálogo como Cinemeta para buscar películas y series.';
-    }
-    catch (error) { $('#sa-manage-status').textContent = error.message; }
+      await api(room, 'install', { url: input.value.trim().replace(/^stremio:\/\//i, 'https://') });
+      input.value = ''; await refresh(); $('#sa-manage-status').textContent = 'Addon instalado.';
+    } catch (err) { $('#sa-manage-status').textContent = err.message; }
     finally { button.disabled = false; }
   };
-  $('#sa-subtitles').onchange = (event) => { if (event.target.id === 'sa-subtitle') chooseSubtitle(event.target.value); };
-  $('#sa-episodes').addEventListener('change', (event) => {
-    if (event.target.id !== 'sa-season') return;
-    const index = state.seasons.findIndex((group) => String(group.season) === event.target.value);
-    if (index === -1) return;
-    state.seasonIndex = index;
-    state.episodeId = state.seasons[index].episodes[0].id;
-    renderEpisodes();
-    loadStreams(state.episodeId);
-  });
-  ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'seeking', 'seeked', 'play', 'pause', 'ended', 'emptied'].forEach((event) => {
-    video.addEventListener(event, updatePlaybackControls);
-  });
-  $('#sa-volume').oninput = (event) => { video.volume = Number(event.target.value); video.muted = false; };
-  timeline.addEventListener('input', () => {
-    scrubbing = true;
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    $('#sa-time').textContent = `${formatPlaybackTime(duration * Number(timeline.value) / 1000)} / ${duration ? formatPlaybackTime(duration) : '--:--'}`;
-    timeline.style.setProperty('--seek-fill', `${timeline.value / 10}%`);
-  });
-  timeline.addEventListener('change', () => {
-    const bounds = seekBounds();
-    if (bounds) {
-      const proposed = video.duration * Number(timeline.value) / 1000;
-      video.currentTime = Math.min(bounds.end, Math.max(bounds.start, proposed));
-    }
-    scrubbing = false;
-    updatePlaybackControls();
-  });
-  video.addEventListener('keydown', (event) => {
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault();
-      seekBy(event.key === 'ArrowLeft' ? -10 : 10);
-    } else if (event.key === ' ' || event.key.toLowerCase() === 'k') {
-      event.preventDefault();
-      if (video.paused) video.play().catch(() => {});
-      else video.pause();
-    }
-  });
-  return {
-    show: async () => {
-      overlay.hidden = false;
-      $('#sa-detail').hidden = true;
-      $('#sa-browse').hidden = false;
-      try { await refresh(); } catch (error) { tell(error.message); }
-    },
-    hide: () => {
-      overlay.hidden = true;
-      ++browseNonce; ++streamNonce; ++detailNonce;
-      state.current = null;
-      stopVideo();
-    },
-  };
-
+  return { show, hide };
 }

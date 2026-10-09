@@ -45,6 +45,18 @@ export function relayConfigured(env = process.env) {
 export function createRelayClient(env = process.env, fetcher = fetch) {
   return {
     configured: relayConfigured(env),
+    async health() {
+      const configValue = config(env);
+      if (!configValue) return { configured: false, ready: false };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const target = new URL('/health', configValue.url);
+          const response = await fetcher(target, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(6000) });
+          if (response.ok && (await response.json()).ok === true) return { configured: true, ready: true };
+        } catch { /* Sleeping containers may wake up on subsequent requests. */ }
+      }
+      return { configured: true, ready: false };
+    },
     async start(channel, identity, tab) {
       const result = await relayRequest('/start', {
         channel: { name: channel.name, url: channel.url },
