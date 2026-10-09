@@ -226,6 +226,23 @@ export class RoomsService {
     const rooms = await Promise.all((account.rooms || []).map((slug) => read(this.store, `room/${slug}`)));
     return rooms.filter((room) => room && !room.deleted && room.ownerId === account.id).map((room) => roomView(room, account));
   }
+  async directAudio(slug, who, action, input) {
+    const room = await this.access(slug, who);
+    if (!who.sessionId) throw new RoomError('Inicia sesión para reproducir.', 401);
+    const relay = this.relayFor(room);
+    if (action === 'direct-audio-start') {
+      let payload;
+      try { payload = JSON.parse(unseal(input.ticket, 'direct-audio:' + slug + ':' + who.sessionId, this.env)); }
+      catch { throw new RoomError('La fuente de audio no está autorizada o ha caducado. Vuelve a buscarla.', 403); }
+      if (typeof payload?.url !== 'string' || payload.url.length > 2000 ||
+          !payload.url.startsWith('https://') || !Number.isSafeInteger(payload.expires) ||
+          payload.expires < this.clock() || payload.expires > this.clock() + 600)
+        throw new RoomError('La fuente de audio ha caducado. Vuelve a seleccionarla.', 403);
+      return relay.directAudioStart(payload.url, who.sessionId);
+    }
+    if (!/^[0-9a-f-]{36}$/i.test(input.id || '')) throw new RoomError('Sesión de audio inválida.', 400);
+    return relay.directAudioStop(input.id, who.sessionId);
+  }
   async startTorrent(slug, who, ticket) {
     const room = await this.access(slug, who);
     if (!who.sessionId) throw new RoomError('Inicia sesión para reproducir.', 401);

@@ -87,6 +87,11 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
         return json({ ok: true });
       }
       const addons = (await read(store, stateKey(slug)))?.addons || [];
+      const attachAudioTicket = (item) => item.kind === 'https' && item.url && who.sessionId
+        ? { ...item, audioTicket: seal(JSON.stringify({
+          url: item.url, expires: clock() + 600,
+        }), 'direct-audio:' + slug + ':' + who.sessionId, env) }
+        : item;
       if (action === 'browser-results') {
         // Browser-CORS responses are untrusted client input. Only opted-in public
         // addons may use this path; normalize every field before returning it.
@@ -123,7 +128,7 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
             ? { ...item, ticket: seal(JSON.stringify({
               hash: item.infoHash, fileIdx: item.fileIdx, expires: clock() + 600,
             }), 'torrent:' + slug + ':' + who.sessionId, env) }
-            : item) });
+            : attachAudioTicket(item)) });
       }
       if (action === 'search') {
         const type = input.type ?? 'all', query = typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '';
@@ -203,7 +208,7 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
               ? { ...item, ticket: seal(JSON.stringify({
                 hash: item.infoHash, fileIdx: item.fileIdx, expires: clock() + 600,
               }), 'torrent:' + slug + ':' + who.sessionId, env) }
-              : item),
+              : attachAudioTicket(item)),
           warnings: results.flatMap(({ warning }) => warning ? [warning] : []),
         });
         return json({ subtitles: results.flatMap(({ items }) => items).slice(0, 80) });

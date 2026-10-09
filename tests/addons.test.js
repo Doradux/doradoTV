@@ -77,6 +77,7 @@ test('authorized guests can browse catalogs and discover supported direct stream
   const streams = await f.call('streams', 'guest', { type: 'movie', id: 'tt12345' });
   assert.equal(streams.data.streams.length, 2);
   assert.equal(streams.data.streams[0].supported, true);
+  assert.equal(streams.data.streams[0].audioTicket.version, 1);
   assert.equal(streams.data.streams[1].supported, false);
   assert.equal((await f.call('catalog', 'guest', { addonId: id, type: 'movie', catalogId: 'test' }, 'otra-sala')).status, 403);
   assert.equal((await f.call('streams', 'guest', { type: 'movie', id: 'invalid' })).data.streams.length, 0);
@@ -214,6 +215,7 @@ test('browser results are validated and torrent tickets signed only for opted-in
   assert.equal(signed.data.streams[0].infoHash, hash);
   assert.equal(signed.data.streams[0].ticket.version, 1);
   assert.equal(signed.data.streams[1].supported, true);
+  assert.equal(signed.data.streams[1].audioTicket.version, 1);
   assert.equal((await f.call('browser-results', 'guest', {
     addonId, resource: 'stream', type: 'movie', id: 'unsupported',
     payload: { streams: [] },

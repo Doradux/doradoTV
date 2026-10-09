@@ -129,6 +129,22 @@ export function createRelayClient(input = null, fetcher = relayFetch) {
       }
       return { configured: true, ready: false };
     },
+    async directAudioStart(url, identity) {
+      const result = await call('/direct-audio/start', 'POST', { url, user_id: identity });
+      if (!/^[0-9a-f-]{36}$/i.test(result?.session_id || ''))
+        throw new RoomError('Sesión de audio inválida.', 503);
+      let media;
+      try { media = new URL(result.playback_url); }
+      catch { throw new RoomError('El relay devolvió una URL de audio inválida.', 503); }
+      if (media.protocol !== 'https:' || media.origin !== cfg.url ||
+          !/^\/direct-audio\/[a-f0-9-]{36}$/.test(media.pathname) ||
+          !/^[a-f0-9]{64}$/.test(media.searchParams.get('token') || ''))
+        throw new RoomError('URL de audio no autorizada.', 503);
+      return { id: result.session_id, url: media.href };
+    },
+    async directAudioStop(id, identity) {
+      return call('/direct-audio/stop', 'POST', { session_id: id, user_id: identity });
+    },
     async torrentStart(hash, fileIdx, identity) {
       try {
         const data = await call('/torrent/start', 'POST', { info_hash: hash, file_idx: fileIdx, user_id: identity });
