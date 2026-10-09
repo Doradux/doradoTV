@@ -21,7 +21,7 @@ export function publicAddress(address) {
 }
 // Pin the validated DNS result to the actual connection. Do not follow redirects.
 export async function fetchProviderJson(url) {
-  if (!['https:', 'http:'].includes(url.protocol) || (url.port && !['80', '443'].includes(url.port))) throw new Error('Unsupported provider');
+  if (!['https:', 'http:'].includes(url.protocol) || (url.port && !['80', '443', '8000', '8080', '25461'].includes(url.port))) throw new Error('Unsupported provider');
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const addresses = await Promise.race([lookup(hostname, { all: true }), new Promise((_, reject) => {
     const timer = setTimeout(() => reject(new Error('DNS timeout')), 3000); timer.unref();
@@ -103,4 +103,30 @@ export async function currentProgram(channelUrl, fetcher = fetchProviderJson, cl
 export function channelProvider(channel, roomId, env = process.env) {
   const account = providerAccount(channel.url);
   return account ? privateId(JSON.stringify(account), env) : `room-${roomId}`;
+}
+
+// Xtream-compatible provider account validation, DNS pinned and SSRF-safe.
+export async function validateProviderCredentials(input, fetcher = fetchProviderJson) {
+  const base = typeof input?.origin === 'string' ? input.origin.trim().replace(/\/$/, '') : '';
+  const username = typeof input?.username === 'string' ? input.username.trim() : '';
+  const password = typeof input?.password === 'string' ? input.password : '';
+  let origin;
+  try {
+    const url = new URL(base);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' ||
+        url.search || url.hash || (url.port && !['80', '443', '8000', '8080', '25461'].includes(url.port))) throw Error('Invalid URL');
+    origin = url.origin;
+  } catch { throw new Error('El proveedor debe ser una dirección HTTP(S) válida, sin rutas ni credenciales.'); }
+  if (!username || username.length > 128 || !password || password.length > 256)
+    throw new Error('Indica un usuario y contraseña válidos para el proveedor.');
+  const url = new URL('/player_api.php', origin);
+  url.search = new URLSearchParams({ username, password });
+  let result;
+  try { result = await fetcher(url); }
+  catch { throw new Error('El proveedor no respondió. Comprueba la dirección y sus credenciales.'); }
+  if (Number(result?.user_info?.auth) !== 1 ||
+      ['Disabled', 'Expired', 'Banned'].includes(String(result?.user_info?.status || '')))
+    throw new Error('El proveedor rechazó las credenciales o la suscripción está inactiva.');
+  const max = Number(result?.user_info?.max_connections);
+  return { origin, username, password, maximum: Number.isSafeInteger(max) && max > 0 ? max : null };
 }

@@ -1,5 +1,58 @@
 # Dorado TV
 
+[**English**](#english) · [**Español**](#espanol)
+
+<a id="english"></a>
+
+## English
+
+Dorado TV is an open-source room-based video application for authorized M3U live channels and Stremio-compatible movie and series sources. This repository provides software, not content, subscriptions, or IPTV accounts.
+
+### Rooms and accounts
+
+Owners sign in with Google and can create up to three private rooms with independent passwords and provider accounts. Guests enter rooms with their room name and password. Signed-in users can revisit up to 40 previously joined rooms from their dashboard, without receiving owner privileges or bypassing room passwords. Room owners can update settings, revoke room sessions, stop broadcasts, export backups, or delete rooms.
+
+### Provider credentials and encryption
+
+During room creation, specify your authorized Xtream-compatible provider's server URL, username and password and click **Verify credentials**. The server checks player_api.php and verifies the credentials again before saving. Credentials can be updated in Room settings after another successful check. Existing rooms can opt in later.
+
+Provider credentials and uploaded M3U files are separately stored using **AES-256-GCM** encryption with room-specific associated data. The master key never reaches browsers. Room metadata does not return account passwords. Once configured, Xtream playlist URLs must match the room's provider credentials. Passwords use salted scrypt; tokens and owner actions are checked on the server.
+
+**Limitation:** M3U playback URLs may themselves embed credentials. Authorized viewers can inspect those URLs in their browser. Storage encryption does not conceal playback URLs from viewers. A full authenticated video proxy would be required for that and would use significant additional bandwidth.
+
+### Unified movies, series and live TV
+
+The same room video player handles both live channels and on-demand streams. Selecting Cinema & Series changes the sidebar to searches, results, seasons, episodes and sources. Every installed addon advertising a compatible searchable catalog is consulted automatically; there is no engine selector. Search results have staggered entrance animations. Series support previous/next episode, a seek bar and ±10-second skips when seekable.
+
+The owner manages room addons with a separate Manage addons button. Sources must be authorized and supported by browser codecs/CORS. WebTorrent attempts to play compatible MP4/WebM torrents **inside the room player**, using browser-compatible WebRTC peers. Traditional BitTorrent seeders are not directly accessible from a browser, so torrent seed counts do not guarantee playback.
+
+### Shared relay and recovery
+
+Netlify hosts the frontend and room APIs. One **shared** external relay handles HTTP live channels by converting them to HTTPS HLS with Node.js/FFmpeg; individual rooms do not need individual relays. The production Netlify configuration points to a Northflank-style .run domain, with Railway deployment instructions also available.
+
+On entering a room the app checks relay /health and attempts repeated wake-up probes if unavailable, showing its status. Health requests can wake a sleeping deployment only when the hosting platform allows request-driven activation; they cannot restart a stopped container administratively. While video initializes, Play is disabled. A Retry connection button appears on failures; selecting channels scrolls smoothly to the player. Infrastructure resources and provider connection limits remain finite.
+
+### Responsible use and legal notices
+
+Use only authorized M3U channels, addons and media. The [Responsible use and notices page](/legal.html) provides a report form when DORADO_REPORT_EMAIL and valid SMTP settings have been configured. Content is not proactively inspected. Disclaimer text cannot grant automatic legal immunity: applicable obligations and protections depend on actual service functions, use and response to valid complaints. Seek legal advice before opening a public service.
+
+### Setup
+
+1. Use Node.js 22, then run npm ci, npm test and npm run build.
+2. Deploy via netlify.toml; the output folder is dist and Netlify Functions live in netlify/functions.
+3. Configure DORADO_ENCRYPTION_KEY, GOOGLE_CLIENT_ID, and the canonical site URL. See [.env.example](.env.example). Keep an offline backup of your encryption key.
+4. Deploy the external HTTPS relay and configure DORADO_RELAY_URL and DORADO_RELAY_SECRET. See [relay setup](relay/README.md).
+5. Optionally enable content notices with DORADO_REPORT_EMAIL, SMTP_USER, SMTP_PASSWORD and optional SMTP_HOST/SMTP_PORT, then verify a real email delivery.
+6. Development: npm run dev -- --port 5199 --strictPort.
+
+The repository does not include media, a provider subscription, or seeders. Both Netlify and relay resources have finite usage quotas.
+
+---
+
+<a id="espanol"></a>
+
+## Español
+
 Salas privadas de televisión para compartir con amigos. Los invitados entran con **nombre único de sala + contraseña**, sin registrarse. Solo necesitan cuenta quienes quieren subir su M3U y crear salas.
 
 ## Qué incluye
@@ -81,9 +134,9 @@ Utiliza listas y emisiones para las que tengas autorización.
 
 ## Addons de Stremio por sala (películas y series)
 
-Dentro de una sala, abre **Cine y series** en la cabecera. Su propietario puede pegar una URL `https://.../manifest.json` y pulsar **Instalar**; las instalaciones y eliminaciones están protegidas por la sesión de propietario en el servidor. Los invitados autenticados con la contraseña de esa sala pueden explorar sus catálogos y seleccionar fuentes, pero no modificar los addons. Cada sala mantiene sus propios addons (máximo 8) en Netlify Blobs; las URLs de configuración se cifran con `DORADO_ENCRYPTION_KEY` y no se incluyen en las respuestas a invitados. Eliminar la sala elimina también su configuración de addons.
+Dentro de una sala, abre **Gestión de addons** en la cabecera. Su propietario puede pegar una URL `https://.../manifest.json` y pulsar **Instalar**; las instalaciones y eliminaciones están protegidas por la sesión de propietario en el servidor. Los invitados autenticados con la contraseña de esa sala pueden explorar sus catálogos y seleccionar fuentes, pero no modificar los addons. Cada sala mantiene sus propios addons (máximo 8) en Netlify Blobs; las URLs de configuración se cifran con `DORADO_ENCRYPTION_KEY` y no se incluyen en las respuestas a invitados. Eliminar la sala elimina también su configuración de addons.
 
-La integración consulta los recursos del [protocolo de Stremio](https://stremio.github.io/stremio-addon-sdk/protocol.html): `manifest`, `catalog`, `meta`, `stream` y `subtitles`, para los tipos `movie` y `series`. Se admiten búsquedas cuando el catálogo las anuncia y selección de episodios. Una película puede ofrecer fuentes desde todos los addons instalados que admitan su identificador. Los streams HTTPS que reproduzca el navegador (por ejemplo MP4 o HLS) se abren con el reproductor web; los torrents, enlaces HTTP y formatos ajenos al navegador aparecen deshabilitados. Los subtítulos externos se intentan cargar mediante CORS y, si son SRT, convertir a WebVTT. Las fuentes pueden imponer protecciones, códecs o cabeceras que el navegador no soporte.
+La integración consulta los recursos del [protocolo de Stremio](https://stremio.github.io/stremio-addon-sdk/protocol.html): `manifest`, `catalog`, `meta`, `stream` y `subtitles`, para los tipos `movie` y `series`. Se admiten búsquedas cuando el catálogo las anuncia y selección de episodios. Una película puede ofrecer fuentes desde todos los addons instalados que admitan su identificador. Los streams HTTPS que reproduzca el navegador (por ejemplo MP4 o HLS) se abren con el reproductor web; los torrents pueden intentarse con pares WebRTC compatibles, y otros formatos no compatibles muestran un error. Los subtítulos externos se intentan cargar mediante CORS y, si son SRT, convertir a WebVTT. Las fuentes pueden imponer protecciones, códecs o cabeceras que el navegador no soporte.
 
 **Seguridad:** los servidores de addons deben servir HTTPS en el puerto 443 y resolver a IPs públicas. El backend fija la IP al conectar, inspecciona de nuevo cada redirección y limita tiempos, tamaño de respuesta y peticiones por sesión. Se validan los manifests y se escapa su contenido al mostrarlo. Instala únicamente addons de confianza y que proporcionen contenido que tengas derecho a reproducir; DoradoTV no incluye contenidos ni un motor de torrents. Las URL de vídeo resultantes se entregan al navegador del miembro autorizado y pueden ser visibles en sus herramientas de desarrollador.
 
@@ -93,7 +146,7 @@ Los addons son una función independiente de las listas M3U y no afectan a sus l
 
 La sala tiene un selector entre **Lista de canales** y **Cine y series**. El acceso a **Gestión de addons** solo aparece al propietario; además, las rutas del servidor comprueban sus permisos al instalar y eliminar complementos. Las búsquedas de películas y series se ejecutan sobre los catálogos que anuncian soporte de búsqueda de los addons instalados; los resultados se agrupan por identificador para evitar duplicados. Los addons exclusivamente de streams participan cuando se consultan las fuentes de un título, no como catálogos.
 
-En las series puede seleccionarse temporada y episodio si un addon de metadatos aporta la lista de episodios. Las fuentes se pueden ordenar por seeders cuando estos están disponibles y elegir individualmente. Las fuentes directas HTTPS compatibles pueden reproducirse en el navegador; los torrents no se reproducen desde Netlify y requieren abrir la fuente magnet en un cliente externo. El número de seeders representa la cantidad indicada por el proveedor, **no** un peer individual al que se pueda conectar desde el navegador.
+En las series puede seleccionarse temporada y episodio si un addon de metadatos aporta la lista de episodios. Las fuentes se pueden ordenar por seeders cuando estos están disponibles y elegir individualmente. Las fuentes directas HTTPS compatibles pueden reproducirse en el navegador; los torrents se pueden intentar reproducir en el navegador cuando hay pares WebRTC y vídeo MP4/WebM compatible. El número de seeders representa la cantidad indicada por el proveedor, **no** un peer individual al que se pueda conectar desde el navegador.
 
 El favicon y los iconos instalables comparten el nuevo logotipo transparente `public/favicon.svg` (sin fondo), con variantes PNG también transparentes.
 
@@ -115,3 +168,15 @@ Para activar el formulario en producción configura **todas** estas variables en
 Prueba el formulario con un aviso de ejemplo controlado y revisa que el mensaje llegue; el test automatizado no envía email real. Los avisos legítimos deben revisarse y gestionarse diligentemente. Es recomendable disponer de un procedimiento para retirar o deshabilitar con rapidez las listas, addons o accesos concretos cuando corresponda, conservar el registro de las actuaciones pertinentes y facilitar el contacto a titulares de derechos y autoridades.
 
 **Importante:** Estas medidas no otorgan exoneración automática. El encaje jurídico de un servicio con M3U, búsqueda de addons y, en ciertos casos, relay de emisiones depende de sus funciones efectivas y del uso, así como de la legislación aplicable. La LSSI española y el Reglamento de Servicios Digitales de la UE incluyen exenciones condicionadas y obligaciones específicas; consulta asesoramiento jurídico antes de abrir el proyecto a terceros fuera de tu entorno de confianza.
+
+### Proveedores por sala, relay y mejoras de reproducción
+
+Las salas nuevas solicitan URL, usuario y contraseña de un proveedor Xtream compatible, que se deben verificar antes de crear la sala. Desde Ajustes pueden sustituirse tras otra comprobación. El servidor vuelve a validar los datos al guardar y los cifra con AES-256-GCM vinculado a la sala. Las salas antiguas pueden seguir funcionando sin migración y añadir su proveedor desde Ajustes. Las listas Xtream de una sala configurada deben coincidir con las credenciales almacenadas.
+
+**Limitación:** las URL de reproducción M3U pueden incluir credenciales que un espectador autorizado puede inspeccionar desde su navegador. El cifrado del almacenamiento no oculta las URL de vídeo entregadas al usuario. Se necesitaría un proxy de vídeo autenticado para ocultarlas por completo, con costes adicionales de tráfico y CPU.
+
+El relay es una infraestructura **compartida** alojada fuera de Netlify, no un relay por sala. Al entrar en una sala la app comprueba su salud y reintenta despertarlo si está suspendido, cuando el proveedor de alojamiento lo permite. No puede arrancar servicios detenidos manualmente en un panel externo.
+
+En Cine y series se reutiliza el reproductor principal de las M3U. El panel lateral muestra búsqueda, resultados, temporadas, episodios y fuentes. La búsqueda usa automáticamente todos los catálogos compatibles, sin selector de motor. El contenido entra con animaciones suaves y escalonadas. Las series tienen anterior/siguiente episodio, barra de tiempo y saltos de 10 segundos.
+
+WebTorrent permite **intentar** reproducir torrents dentro de la app si hay pares WebRTC compatibles y vídeo MP4/WebM reproducible; los seeders de BitTorrent tradicionales no garantizan reproducción web. Utiliza exclusivamente fuentes autorizadas.

@@ -24,6 +24,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
         if (action === 'session') return json({ account: accountView(who.account), guestRoom: who.guest?.roomId || null });
         if (action === 'mine') return json({ rooms: await service.mine(who.account), visited: await service.visited(who.account) });
         if (action === 'room') return json(roomView(await service.access(slug, who), who.account));
+        if (action === 'relay-health') return json(await service.relayHealth(slug, who));
         if (action === 'playlist') return json({ source: service.playlist(await service.access(slug, who)) });
         if (action === 'status') return json(await service.status(slug, who));
         if (action === 'export') {
@@ -116,6 +117,10 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
         return response;
       }
       if (action === 'forget-visited') return json(await service.forgetVisited(who.account, slug));
+      if (action === 'verify-provider') {
+        await rateLimit(store, 'verify-provider:' + (who.account?.id || ip), 12, 900, clock?.());
+        return json(await service.testProvider(who, input.provider, slug || null));
+      }
       if (action === 'create') { await rateLimit(store, `create:${who.account?.id || ip}`, 8, 3600, clock?.()); return json(await service.create(who.account, input), 201); }
       if (action === 'update') return json(await service.update(slug, who, input));
       if (action === 'delete') { await service.remove(slug, who, input.revision); return json({ ok: true }); }

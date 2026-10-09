@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { parsePlaylist } from '../../src/playlist.js';
 import { RoomError, mutate, read } from './room-store.js';
 import { hashPassword, verifyPassword, digest, secretToken, seal, unseal, newSession, nowSeconds } from './room-security.js';
-import { detectProviders, channelProvider, currentProgram } from './room-provider.js';
+import { detectProviders, channelProvider, currentProgram, validateProviderCredentials, providerAccount } from './room-provider.js';
 import { createRelayClient } from './room-relay.js';
 
 export const MAX_PLAYLIST_BYTES = 10 * 1024 * 1024;
@@ -22,11 +22,12 @@ export const accountView = (account) => account ? { id: account.id, username: ac
 export function roomView(room, account) {
   return { slug: room.slug, title: room.title, owner: room.ownerId === account?.id, hasPlaylist: !!room.playlist,
     channelCount: room.channelCount || 0, limit: room.limit, detectedMaximum: room.detectedMaximum,
-    revision: room.revision, updated: room.updated, created: room.created };
+    revision: room.revision, updated: room.updated, created: room.created,
+    providerConfigured: !!room.providerCredentials, providerHost: room.ownerId === account?.id ? (room.providerHost || null) : null };
 }
 export class RoomsService {
-  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, program = currentProgram, sendMail, relay } = {}) {
-    this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.program = program; this.sendMail = sendMail;
+  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, verifyProvider = validateProviderCredentials, program = currentProgram, sendMail, relay } = {}) {
+    this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.verifyProvider = verifyProvider; this.program = program; this.sendMail = sendMail;
     this.relay = relay ?? createRelayClient(env);
   }
   async googleLogin({ sub, email }) {
@@ -187,6 +188,10 @@ export class RoomsService {
     const rooms = await Promise.all((account.rooms || []).map((slug) => read(this.store, `room/${slug}`)));
     return rooms.filter((room) => room && !room.deleted && room.ownerId === account.id).map((room) => roomView(room, account));
   }
+  async relayHealth(slug, who) {
+    await this.access(slug, who);
+    return typeof this.relay.health === 'function' ? this.relay.health() : { configured: !!this.relay.configured, ready: !!this.relay.configured };
+  }
   async visited(account) {
     if (!account?.verified) throw new RoomError('Inicia sesión para ver tu historial.', 401);
     const visits = (account.visitedRooms || []).filter((item) => validRoom(item.slug)).slice(0, 40);
@@ -204,7 +209,17 @@ export class RoomsService {
     });
     return { ok: true };
   }
-  async create(account, { slug: raw, title, password }) {
+  async testProvider(who, input, slug = null) {
+    if (!who?.account?.verified) throw new RoomError('Inicia sesión.', 401);
+    if (slug) await this.access(slug, who, true);
+    const checked = await this.checkedProvider(input);
+    return { valid: true, host: new URL(checked.origin).hostname, maximum: checked.maximum };
+  }
+  async checkedProvider(input) {
+    try { return await this.verifyProvider(input); }
+    catch (error) { throw new RoomError(error.message || 'No se pudieron verificar las credenciales.', 400); }
+  }
+  async create(account, { slug: raw, title, password, provider }) {
     if (!account?.verified) throw new RoomError('Inicia sesión para crear una sala.', 401);
     if (account.googleSub && !validUsername(account.username)) throw new RoomError('Elige primero tu nombre de usuario.', 403, { needsUsername: true });
     const slug = normalizeRoom(raw);
@@ -212,6 +227,7 @@ export class RoomsService {
     if (typeof title !== 'string' || !title.trim() || title.trim().length > 60) throw new RoomError('Pon un título de hasta 60 caracteres.');
     validatePassword(password);
     const passwordHash = await hashPassword(password);
+    const checkedProvider = provider ? await this.checkedProvider(provider) : null;
     if (account.pendingRooms?.length) await this.reconcileRooms(account);
     const operation = randomUUID();
     // Reserve the owner's quota before claiming a globally unique room name.
@@ -223,7 +239,9 @@ export class RoomsService {
     });
     let created = false;
     try {
-      const room = { slug, creationOperation: operation, title: title.trim(), ownerId: account.id, passwordHash, version: 1, revision: 1, playlist: null, limit: null, detectedMaximum: null, providers: [], created: this.clock(), updated: this.clock() };
+      const room = { slug, creationOperation: operation, title: title.trim(), ownerId: account.id, passwordHash, version: 1, revision: 1, playlist: null, limit: null, detectedMaximum: null, providers: [], providerCredentials: checkedProvider ? seal(JSON.stringify(checkedProvider), 'provider:' + slug, this.env) : null,
+        providerHost: checkedProvider ? new URL(checkedProvider.origin).hostname : null,
+        created: this.clock(), updated: this.clock() };
       const result = await this.store.setJSON(`room/${slug}`, room, { onlyIfNew: true });
       if (!result.modified) throw new RoomError('Ese nombre de sala ya está ocupado.', 409);
       created = true;
@@ -236,6 +254,19 @@ export class RoomsService {
   async update(slug, who, input) {
     const old = await this.access(slug, who, true);
     const hash = input.password ? (validatePassword(input.password), await hashPassword(input.password)) : null;
+    const checkedProvider = input.provider ? await this.checkedProvider(input.provider) : null;
+    // Never leave an old provider's streaming account attached after changing credentials.
+    const previousAccount = old.providerCredentials
+      ? JSON.parse(unseal(old.providerCredentials, 'provider:' + slug, this.env)) : null;
+    const changedAccount = !!checkedProvider && (!previousAccount ||
+      previousAccount.origin !== checkedProvider.origin ||
+      previousAccount.username !== checkedProvider.username ||
+      previousAccount.password !== checkedProvider.password);
+    const clearPlaylist = changedAccount && !!old.playlist && parsePlaylist(this.playlist(old)).some((channel) => {
+      const linked = providerAccount(channel.url);
+      return linked && (linked.origin !== checkedProvider.origin ||
+        linked.username !== checkedProvider.username || linked.password !== checkedProvider.password);
+    });
     const next = await mutate(this.store, `room/${slug}`, (room) => {
       if (room.deleted || room.ownerId !== who.account.id) throw new RoomError('Sala no disponible.', 403);
       if (input.revision !== room.revision) throw new RoomError('La sala ha cambiado. Actualiza la página antes de guardar.', 409);
@@ -243,9 +274,16 @@ export class RoomsService {
       if (typeof title !== 'string' || !title.trim() || title.trim().length > 60) throw new RoomError('Pon un título de hasta 60 caracteres.');
       const limit = input.limit === null ? null : Number(input.limit);
       if (limit !== null && (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000)) throw new RoomError('El límite debe ser un entero entre 1 y 10000.');
-      if (room.detectedMaximum !== null && (limit === null || limit > room.detectedMaximum)) throw new RoomError(`Puedes habilitar entre 1 y ${room.detectedMaximum} conexiones.`);
+      if (!clearPlaylist && room.detectedMaximum !== null && (limit === null || limit > room.detectedMaximum)) throw new RoomError(`Puedes habilitar entre 1 y ${room.detectedMaximum} conexiones.`);
       return { ...room, title: title.trim(), limit, passwordHash: hash || room.passwordHash,
-        version: hash || input.revoke ? room.version + 1 : room.version, revision: room.revision + 1, updated: this.clock() };
+        providerCredentials: checkedProvider ? seal(JSON.stringify(checkedProvider), 'provider:' + slug, this.env) : room.providerCredentials,
+        providerHost: checkedProvider ? new URL(checkedProvider.origin).hostname : room.providerHost,
+        playlist: clearPlaylist ? null : room.playlist,
+        providers: clearPlaylist ? [] : room.providers,
+        channelCount: clearPlaylist ? 0 : room.channelCount,
+        detectedMaximum: clearPlaylist ? null : room.detectedMaximum,
+        limit: clearPlaylist ? null : limit,
+        version: hash || input.revoke || checkedProvider ? room.version + 1 : room.version, revision: room.revision + 1, updated: this.clock() };
     });
     if (next.version !== old.version) await this.clearRoomLeases(old);
     return roomView(next, who.account);
@@ -300,6 +338,15 @@ export class RoomsService {
     if (!source.replace(/^\uFEFF/, '').trimStart().startsWith('#EXTM3U')) throw new RoomError('El contenido no es una lista M3U válida.');
     const channels = parsePlaylist(source);
     if (!channels.length) throw new RoomError('El archivo no contiene canales válidos.');
+    if (old.providerCredentials) {
+      const allowed = JSON.parse(unseal(old.providerCredentials, 'provider:' + slug, this.env));
+      for (const channel of channels) {
+        const found = providerAccount(channel.url);
+        if (found && (found.origin !== allowed.origin || found.username !== allowed.username || found.password !== allowed.password)) {
+          throw new RoomError('La lista contiene credenciales de otro proveedor. Usa las credenciales configuradas para esta sala.', 400);
+        }
+      }
+    }
     const detected = await this.detect(channels, this.env);
     const providers = await Promise.all(detected.map(async (provider) => {
       const global = await read(this.store, `leases/${provider.id}`);

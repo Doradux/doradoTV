@@ -292,3 +292,8 @@ button:disabled { cursor: not-allowed; }
 .global-legal { padding: 17px 22px 26px; text-align: center; background: #090b10; }
 .global-legal a { color: #9399a7; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
 .global-legal a:hover { color: #f1c675; }
+
+.relay-health{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:#80deba;font-size:12px;margin-top:9px;transition:opacity .3s}
+.relay-health.is-offline{color:#e5be79}
+.relay-health button{border:1px solid #e7c27685;border-radius:8px;background:transparent;color:#eac377;padding:6px 9px;cursor:pointer}
+.relay-health[hidden],.relay-health button[hidden]{display:none!important}

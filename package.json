@@ -20,7 +20,8 @@
     "lucide": "^1.48.0",
     "morphicons": "^1.7.1",
     "mpegts.js": "^1.7.3",
-    "nodemailer": "^10.0.12"
+    "nodemailer": "^10.0.12",
+    "webtorrent": "^3.0.21"
   },
   "devDependencies": {
     "@netlify/vite-plugin": "^3.0.1",
