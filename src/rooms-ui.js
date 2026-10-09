@@ -110,17 +110,23 @@ export async function mountPortal(app, config, initial = {}) {
   render();
 }
 
+function maskPrivateConfigurationInputs(root) {
+  if (typeof CSS === 'undefined' || !CSS.supports('-webkit-text-security', 'disc')) {
+    root.querySelectorAll('[data-private-input]').forEach((field) => { field.type = 'password'; });
+  }
+}
+
 export async function mountDashboard(app, account) {
-  app.innerHTML = `<div class="app-shell rooms-dashboard"><header class="app-header">${brand}<div class="header-actions"><span class="account-name">${escapeHtml((account.username || account.name))}</span><button id="account-logout" class="icon-button" aria-label="Cerrar sesión">${iconSvg(LogOut)}</button></div></header><main><div class="dashboard-heading"><div><h1>Mis salas</h1></div><button id="create-open" class="primary-button">${iconSvg(Plus)} Crear sala</button></div><section id="create-panel" class="room-create-panel hidden" aria-labelledby="create-title"><div><h2 id="create-title">Nueva sala</h2><p>Hasta 3 salas por cuenta. La contraseña de la sala es independiente de la de tu cuenta.</p></div><form id="create-room" class="room-form"><label>Título de la sala<input name="title" required maxlength="60" placeholder="La tele de casa" /></label><label>Nombre único<input name="slug" required pattern="[a-z0-9][a-z0-9-]{2,39}" minlength="3" maxlength="40" autocapitalize="none" spellcheck="false" placeholder="la-tele-de-casa" /><small>Solo letras minúsculas, números y guiones.</small></label><label>Contraseña para invitados<input name="password" type="password" required minlength="10" maxlength="128" autocomplete="new-password" placeholder="Al menos 10 caracteres" /></label><fieldset class="provider-fields"><legend>Proveedor IPTV (Xtream)</legend>
-  <label>URL del servidor<input id="create-provider-origin" type="url" placeholder="https://proveedor.example" required autocomplete="off"></label>
-  <label>Usuario del proveedor<input id="create-provider-user" maxlength="128" required autocomplete="off"></label>
-  <label>Contraseña del proveedor<input id="create-provider-pass" type="password" maxlength="256" required autocomplete="new-password"></label>
+  app.innerHTML = `<div class="app-shell rooms-dashboard"><header class="app-header">${brand}<div class="header-actions"><span class="account-name">${escapeHtml((account.username || account.name))}</span><button id="account-logout" class="icon-button" aria-label="Cerrar sesión">${iconSvg(LogOut)}</button></div></header><main><div class="dashboard-heading"><div><h1>Mis salas</h1></div><button id="create-open" class="primary-button">${iconSvg(Plus)} Crear sala</button></div><section id="create-panel" class="room-create-panel hidden" aria-labelledby="create-title"><div><h2 id="create-title">Nueva sala</h2><p>Hasta 3 salas por cuenta. La contraseña de la sala es independiente de la de tu cuenta.</p></div><form id="create-room" class="room-form" autocomplete="off" data-form-type="other" data-lpignore="true"><label>Título de la sala<input name="title" required maxlength="60" placeholder="La tele de casa" /></label><label>Nombre único<input name="slug" required pattern="[a-z0-9][a-z0-9-]{2,39}" minlength="3" maxlength="40" autocapitalize="none" spellcheck="false" placeholder="la-tele-de-casa" /><small>Solo letras minúsculas, números y guiones.</small></label><label>Contraseña para invitados<input name="password" type="text" class="room-secret-input" data-private-input autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore="true" spellcheck="false" autocapitalize="off" required minlength="10" maxlength="128" placeholder="Al menos 10 caracteres" /></label><fieldset class="provider-fields"><legend>Proveedor IPTV (Xtream, opcional)</legend><p class="field-help">Solo si utilizas una cuenta Xtream. No introduzcas aquí la URL ni la clave del relay.</p>
+  <label>URL del servidor<input id="create-provider-origin" type="url" placeholder="https://proveedor.example" autocomplete="off"></label>
+  <label>Usuario del proveedor<input id="create-provider-user" maxlength="128" autocomplete="off"></label>
+  <label>Contraseña del proveedor<input id="create-provider-pass" type="text" class="room-secret-input" data-private-input autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore="true" spellcheck="false" autocapitalize="off" maxlength="256"></label>
   <button id="create-verify-provider" type="button" class="secondary-button">Comprobar credenciales</button>
   <p id="create-provider-status" class="form-message" role="status"></p>
 </fieldset><fieldset class="provider-fields relay-fields"><legend>Relay privado de esta sala</legend>
   <small class="field-help">Despliega tu relay en Northflank u otro alojamiento y configura un servicio diferente para cada sala.</small>
   <label>URL HTTPS del relay<input id="create-relay-url" type="url" placeholder="https://mi-relay.code.run" required autocomplete="off"></label>
-  <label>Clave privada del relay<input id="create-relay-secret" type="password" minlength="16" maxlength="256" required autocomplete="new-password"></label>
+  <label>Clave privada del relay<input id="create-relay-secret" type="text" class="room-secret-input" data-private-input autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore="true" spellcheck="false" autocapitalize="off" minlength="16" maxlength="256" required></label>
   <button id="create-verify-relay" type="button" class="secondary-button">Comprobar relay y clave</button>
   <p id="create-relay-status" class="form-message" role="status"></p>
 </fieldset><p class="form-message" id="create-message" role="status"></p><button type="submit" class="primary-button">Crear sala ${iconSvg(ArrowRight)}</button></form></section><div id="rooms-grid" class="rooms-grid" aria-live="polite"><p class="list-empty">Cargando tus salas…</p></div><section class="visited-section" aria-labelledby="visited-heading">
@@ -129,6 +135,7 @@ export async function mountDashboard(app, account) {
   <p id="visited-status" class="form-message" role="status"></p>
 </section>
 <p class="dashboard-footnote">El historial no otorga permisos sobre salas ajenas ni almacena contraseñas de sala.</p><a class="text-link" href="/?join=1">Entrar en otra sala como invitado ${iconSvg(ArrowRight, 'h-4 w-4')}</a></main></div>`;
+  maskPrivateConfigurationInputs(app.querySelector('#create-room'));
   app.querySelector('#account-logout').onclick = async () => { await roomApi('logout', { data: {} }); navigateRoom(); };
   app.querySelector('#create-open').onclick = () => { const panel = app.querySelector('#create-panel'); panel.classList.toggle('hidden'); if (!panel.classList.contains('hidden')) panel.querySelector('input').focus(); };
   app.querySelector('#visited-grid').addEventListener('click', async (event) => {
@@ -153,7 +160,7 @@ export async function mountDashboard(app, account) {
     username: app.querySelector('#create-provider-user').value.trim(),
     password: app.querySelector('#create-provider-pass').value,
   });
-  createForm.querySelectorAll('.provider-fields input').forEach((field) => field.addEventListener('input', () => {
+  createForm.querySelectorAll('.provider-fields:not(.relay-fields) input').forEach((field) => field.addEventListener('input', () => {
     createForm.dataset.providerVerified = '';
     app.querySelector('#create-provider-status').textContent = '';
   }));
@@ -193,8 +200,10 @@ export async function mountDashboard(app, account) {
   };
   app.querySelector('#create-room').onsubmit = async (event) => {
     event.preventDefault(); const button = event.currentTarget.querySelector('button[type="submit"]');
-    if (event.currentTarget.dataset.providerVerified !== 'true') {
-      app.querySelector('#create-provider-status').textContent = 'Comprueba las credenciales antes de crear la sala.';
+    const provider = createProvider();
+    const hasProvider = Object.values(provider).some(Boolean);
+    if (hasProvider && event.currentTarget.dataset.providerVerified !== 'true') {
+      app.querySelector('#create-provider-status').textContent = 'Comprueba las credenciales IPTV antes de crear la sala o deja sus campos vacíos.';
       return;
     }
     if (event.currentTarget.dataset.relayVerified !== 'true') {
@@ -202,7 +211,7 @@ export async function mountDashboard(app, account) {
       return;
     }
     button.disabled = true;
-    try { const room = await roomApi('create', { data: { ...Object.fromEntries(new FormData(event.currentTarget)), provider: createProvider(), relay: createRelay() } }); navigateRoom(room.slug); }
+    try { const room = await roomApi('create', { data: { ...Object.fromEntries(new FormData(event.currentTarget)), ...(hasProvider ? { provider } : {}), relay: createRelay() } }); navigateRoom(room.slug); }
     catch (error) { app.querySelector('#create-message').textContent = error.message; button.disabled = false; }
   };
   try {
@@ -227,21 +236,22 @@ export function mountRoomSettings(shell, initialRoom, opener, { onUpdate, onRevo
   let room = initialRoom;
   const modal = document.createElement('div');
   modal.className = 'fixed inset-0 z-50 hidden items-center justify-center p-4'; modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.setAttribute('aria-labelledby', 'settings-title');
-  modal.innerHTML = `<div class="room-settings-panel"><div class="settings-heading"><div><h2 id="settings-title">Ajustes de la sala</h2></div><button id="settings-close" class="icon-button" aria-label="Cerrar ajustes">${iconSvg(X)}</button></div><form id="settings-form" class="room-form"><label>Título<input name="title" required maxlength="60" /></label><div class="room-share"><span>${escapeHtml(room.slug)}</span><button id="copy-room" type="button" class="text-link">${iconSvg(Copy, 'h-4 w-4')} Copiar enlace</button></div><label>Nueva contraseña de la sala<input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="Dejar vacío para mantener la actual" /><small>Al cambiarla se cerrarán los accesos anteriores.</small></label><fieldset class="provider-fields"><legend>Proveedor IPTV (Xtream)</legend>
+  modal.innerHTML = `<div class="room-settings-panel"><div class="settings-heading"><div><h2 id="settings-title">Ajustes de la sala</h2></div><button id="settings-close" class="icon-button" aria-label="Cerrar ajustes">${iconSvg(X)}</button></div><form id="settings-form" class="room-form" autocomplete="off" data-form-type="other" data-lpignore="true"><label>Título<input name="title" required maxlength="60" /></label><div class="room-share"><span>${escapeHtml(room.slug)}</span><button id="copy-room" type="button" class="text-link">${iconSvg(Copy, 'h-4 w-4')} Copiar enlace</button></div><label>Nueva contraseña de la sala<input name="password" type="text" class="room-secret-input" data-private-input autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore="true" spellcheck="false" autocapitalize="off" minlength="10" maxlength="128" placeholder="Dejar vacío para mantener la actual" /><small>Al cambiarla se cerrarán los accesos anteriores.</small></label><fieldset class="provider-fields"><legend>Proveedor IPTV (Xtream, opcional)</legend><p class="field-help">Solo si utilizas una cuenta Xtream. No introduzcas aquí la URL ni la clave del relay.</p>
   <p id="provider-current" class="field-help"></p>
   <label>URL del servidor<input id="settings-provider-origin" type="url" placeholder="https://proveedor.example" autocomplete="off"></label>
   <label>Usuario<input id="settings-provider-user" maxlength="128" autocomplete="off"></label>
-  <label>Contraseña<input id="settings-provider-pass" type="password" maxlength="256" autocomplete="new-password" placeholder="Nueva contraseña"></label>
+  <label>Contraseña<input id="settings-provider-pass" type="text" class="room-secret-input" data-private-input autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore="true" spellcheck="false" autocapitalize="off" maxlength="256" placeholder="Nueva contraseña"></label>
   <button id="settings-verify-provider" type="button" class="secondary-button">Comprobar credenciales</button>
   <p id="settings-provider-status" class="form-message" role="status"></p>
 </fieldset><fieldset class="provider-fields relay-fields"><legend>Relay privado de la sala</legend>
-  <p id="relay-current" class="field-help"></p>
+  <p id="relay-current" class="field-help"></p><p class="field-help">Aquí se configura el servidor que comparte emisiones entre espectadores, no el proveedor IPTV.</p>
   <label>URL HTTPS del relay<input id="settings-relay-url" type="url" placeholder="https://mi-relay.code.run" autocomplete="off"></label>
-  <label>Clave privada del relay<input id="settings-relay-secret" type="password" minlength="16" maxlength="256" autocomplete="new-password" placeholder="Clave secreta del servidor"></label>
+  <label>Clave privada del relay<input id="settings-relay-secret" type="text" class="room-secret-input" data-private-input autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore="true" spellcheck="false" autocapitalize="off" minlength="16" maxlength="256" placeholder="Clave secreta del servidor"></label>
   <button id="settings-verify-relay" type="button" class="secondary-button">Comprobar relay y clave</button>
   <p id="settings-relay-status" class="form-message" role="status"></p>
 </fieldset><div><label id="limit-label" class="field-label">Conexiones simultáneas en la app</label><div class="category-field"><select id="room-limit" hidden tabindex="-1" aria-hidden="true"></select><button id="room-limit-trigger" type="button" role="combobox" class="select-trigger" aria-labelledby="limit-label room-limit-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="room-limit-options"><span id="room-limit-value"></span>${morphSvg(ChevronDown, 'room-limit-chevron', 'h-4 w-4')}</button><div id="room-limit-options" class="select-menu" role="listbox" aria-label="Conexiones simultáneas" aria-hidden="true"></div></div><input id="custom-limit" type="number" min="1" max="10000" step="1" aria-label="Número de conexiones" class="hidden" /><p id="limit-description" class="field-help"></p></div><p class="form-message" id="settings-message" role="status"></p><button type="submit" class="primary-button">Guardar cambios</button></form><div class="settings-actions"><button id="revoke-room" class="secondary-button">Cerrar todos los accesos</button><button id="export-room" class="secondary-button">${iconSvg(Download, 'h-4 w-4')} Exportar copia</button><button id="delete-room" class="danger-button">Eliminar sala</button></div><div id="room-confirm" class="confirmation-box hidden"><p id="confirm-description"></p><div><button id="confirm-action" class="danger-button">Confirmar</button><button id="confirm-cancel" class="secondary-button">Cancelar</button></div></div></div>`;
   shell.append(modal);
+  maskPrivateConfigurationInputs(modal);
   const $ = (query) => modal.querySelector(query);
   const dialog = createDialog(modal, opener, $('#settings-close'));
   const select = createCustomSelect($('#room-limit'), $('#room-limit-trigger'), $('#room-limit-options'), $('#room-limit-value'), $('#room-limit-chevron'), { portal: true, labelPrefix: 'Conexiones simultáneas' });
@@ -252,7 +262,7 @@ export function mountRoomSettings(shell, initialRoom, opener, { onUpdate, onRevo
     password: $('#settings-provider-pass').value,
   });
   const providerChanged = () => Object.values(providerInput()).some(Boolean);
-  $('#settings-form').querySelectorAll('.provider-fields input').forEach((field) =>
+  $('#settings-form').querySelectorAll('.provider-fields:not(.relay-fields) input').forEach((field) =>
     field.addEventListener('input', () => {
       $('#settings-form').dataset.providerVerified = '';
       $('#settings-provider-status').textContent = '';
