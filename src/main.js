@@ -460,6 +460,16 @@ function mountPlayer(session, account) {
       updateVodProgress();
     } catch (error) {
       if (token !== playbackToken) return;
+      // Failed torrent attempts must not leave swarm connections or SW streams
+      // alive while the user chooses a new source or clicks Retry.
+      if (source.kind === 'torrent' && torrentClient) {
+        const client = torrentClient;
+        torrentClient = null;
+        if (!client.destroyed) client.destroy(() => {});
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      }
       setConnecting(false); setLoading(false);
       setStatus(error.message || 'No se pudo iniciar el vídeo.', true);
       $('#retry-video').hidden = false;
