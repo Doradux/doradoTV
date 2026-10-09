@@ -73,3 +73,9 @@ Para películas mayores primero amplía el almacenamiento y la RAM y después su
 ## Contenedores MKV, AVI, MOV y TS
 
 El relay reconoce estos contenedores y puede servirlos mediante una ruta temporal de remux, verificada con el token individual. FFmpeg recibe bytes del torrent por su entrada estándar y entrega un MP4 fragmentado por la salida estándar. Copia el vídeo sin recodificar y convierte el audio a AAC estéreo para compatibilidad. El consumo de CPU es mucho menor que convertir el vídeo entero, y se evitan archivos MP4 duplicados en el almacenamiento limitado. Se admiten como máximo dos procesos de remux simultáneos por relay. No se permiten saltos temporales en esta ruta: el progreso sigue siendo progresivo. Un códec de vídeo incompatible con HTML5 seguirá sin reproducirse, y el límite de tamaño por archivo no cambia.
+
+## Caché circular para torrents grandes
+
+Para MKV/AVI/MOV/TS/M2TS grandes, WebTorrent selecciona ventanas pequeñas y consecutivas del vídeo y guarda piezas verificadas en un almacén circular limitado a **256 MiB**. De esta manera un vídeo de 8 GiB no necesita 8 GiB de disco; el límite de tamaño progresivo es **12 GiB** por archivo. Los torrents menores de 700 MiB mantienen almacenamiento convencional y peticiones de acceso aleatorio. Los MP4 grandes siguen requiriendo almacenamiento suficiente, porque el navegador y sus índices pueden pedir rangos lejanos.
+
+Limitaciones actuales: un solo espectador de un torrent grande simultáneamente, sin adelantar/rebobinar, reinicio de swarm al parar para re-descargar los fragmentos ya descartados. El tráfico de datos BitTorrent y la retransmisión al espectador continúan; vigila las cuotas de Northflank. Se mantiene un torrent simultáneo por defecto y el bloqueo de IPs privadas recibido de los trackers.
