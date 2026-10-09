@@ -33,3 +33,14 @@ test('cinema search has one field and requests both movies and series', () => {
   assert(backend.includes("'all'"));
 });
 
+
+test('stream sources wrap into bounded cards and theater mode releases panel height', () => {
+  const css = source('src/stremio.css');
+  assert.match(css, /\.sa-streams\s*\{\s*display:flex;\s*flex-wrap:wrap;/);
+  assert.match(css, /\.sa-source\s*\{[^}]*flex:1 1 230px;[^}]*max-width:min\(100%,340px\);/s);
+  assert.match(css, /\.sa-source>span\s*\{[^}]*min-width:0;[^}]*max-width:100%;/s);
+  assert.match(css, /\.sa-source strong,\.sa-source small\s*\{[^}]*overflow-wrap:anywhere;/s);
+  assert.match(css, /#watch-layout\.media-mode-cinema:not\(\.is-theater\) \.channel-panel\s*\{[^}]*overflow-y:auto;/s);
+  assert.match(css, /#watch-layout\.media-mode-cinema\.is-theater \.channel-panel\s*\{[^}]*max-height:none;/s);
+});
+
