@@ -254,3 +254,13 @@
 .relay-fields .field-help { overflow-wrap: anywhere; }
 .relay-fields button:disabled { opacity: .58; cursor: wait; }
 @media (max-width: 580px) { .room-settings-panel { max-height: 93dvh; } }
+
+/* Non-login owner secrets: mask text without Chromium's password-save heuristic.
+   Engines lacking -webkit-text-security use native password fallback in JS. */
+.room-secret-input {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+.room-secret-input:focus {
+  -webkit-text-security: disc;
+}
