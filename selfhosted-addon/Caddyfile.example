@@ -1,0 +1,8 @@
+# Replace these names with domains you control; both must resolve to this Ubuntu host.
+addon.example.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:5310
+}
+relay.example.com {
+    reverse_proxy 127.0.0.1:5300
+}

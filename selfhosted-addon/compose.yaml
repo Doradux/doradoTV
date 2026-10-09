@@ -1,0 +1,30 @@
+services:
+  doradotv-addon:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PORT=5310
+      - SOURCES_FILE=/data/sources.json
+    volumes:
+      - ./config:/data:ro
+    ports:
+      - "127.0.0.1:5310:5310"
+    mem_limit: 256m
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    profiles: ["indexer"]
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/Madrid
+    volumes:
+      - jackett-config:/config
+    ports:
+      - "127.0.0.1:9117:9117"
+    mem_limit: 512m
+
+volumes:
+  jackett-config:

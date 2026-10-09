@@ -1,0 +1,16 @@
+{
+  "name": "doradotv-selfhosted-addon",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.2.5"
+  }
+}
