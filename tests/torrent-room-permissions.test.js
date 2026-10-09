@@ -80,3 +80,51 @@ test('direct-audio permission tickets are room-scoped, viewer-scoped and short-l
     { id: '11111111-2222-3333-4444-555555555555' }), { ok: true });
   assert.equal(calls[1].sessionId, viewer);
 });
+
+test('on-demand VOD can only start from a server-issued room and viewer ticket', async () => {
+  const env = { DORADO_ENCRYPTION_KEY: Buffer.alloc(32, 21).toString('base64') };
+  const store = memoryBlobStore();
+  const room = 'stream-room', viewerId = 'viewer-hls', now = 62000;
+  const calls = [];
+  await store.setJSON('room/' + room, {
+    slug: room, ownerId: 'owner', revision: 1, version: 1,
+    relayCredentials: seal(JSON.stringify({
+      url: 'https://relay.example.org', secret: 'private-test-only',
+    }), 'relay:' + room, env),
+  });
+  const service = new RoomsService(store, { env, clock: () => now, relayFactory: () => ({
+    vodStart: async (source, viewer) => {
+      calls.push({ source, viewer }); return { id: '11111111-2222-3333-4444-555555555555' };
+    },
+    vodStatus: async (id, viewer) => ({ state: 'ready', id, viewer }),
+    vodStop: async () => ({ ok: true }),
+  }) });
+  const who = { account: { id: 'owner', verified: true }, sessionId: viewerId };
+  const hash = 'a'.repeat(40);
+  const torrentTicket = (expiry, viewer = viewerId) => seal(JSON.stringify({
+    hash, fileIdx: 0, expires: expiry,
+  }), 'torrent:' + room + ':' + viewer, env);
+  const directTicket = (expiry, viewer = viewerId) => seal(JSON.stringify({
+    url: 'https://cdn.example.org/video.mkv?token=signed', expires: expiry,
+  }), 'direct-audio:' + room + ':' + viewer, env);
+  assert.equal((await service.startVod(room, who, { kind: 'torrent', ticket: torrentTicket(now + 60) })).id,
+    '11111111-2222-3333-4444-555555555555');
+  assert.equal((await service.startVod(room, who, { kind: 'https', ticket: directTicket(now + 60) })).id,
+    '11111111-2222-3333-4444-555555555555');
+  assert.deepEqual(calls, [
+    { source: { info_hash: hash, file_idx: 0 }, viewer: viewerId },
+    { source: { url: 'https://cdn.example.org/video.mkv?token=signed' }, viewer: viewerId },
+  ]);
+  for (const input of [
+    { kind: 'https', ticket: directTicket(now - 1) },
+    { kind: 'torrent', ticket: torrentTicket(now + 601) },
+    { kind: 'https', ticket: directTicket(now + 60, 'another-viewer') },
+    { kind: 'torrent', ticket: directTicket(now + 60) },
+    { kind: 'https', url: 'https://cdn.example.org/anything.mkv' },
+  ]) await assert.rejects(service.startVod(room, who, input), { status: 403 });
+  await assert.rejects(service.startVod('another-room', who,
+    { kind: 'torrent', ticket: torrentTicket(now + 60) }), { status: 403 });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(await service.vodCommand(room, who, 'vod-stop',
+    '11111111-2222-3333-4444-555555555555'), { ok: true });
+});

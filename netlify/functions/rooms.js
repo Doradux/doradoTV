@@ -134,6 +134,12 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       }
       if (action === 'upload-chunk') return json(await service.uploadChunk(slug, who, input));
       if (action === 'upload-commit') return json(await service.commitUpload(slug, who, input));
+      if (action === 'vod-start') {
+        await rateLimit(store, 'vod-start:' + (who.sessionId || ip), 20, 600, clock?.());
+        return json(await service.startVod(slug, who, input));
+      }
+      if (['vod-status', 'vod-stop'].includes(action))
+        return json(await service.vodCommand(slug, who, action, input.id));
       if (action === 'direct-audio-start') {
         await rateLimit(store, 'direct-audio:' + (who.sessionId || ip), 12, 600, clock?.());
         return json(await service.directAudio(slug, who, action, input));

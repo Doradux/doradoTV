@@ -129,6 +129,29 @@ export function createRelayClient(input = null, fetcher = relayFetch) {
       }
       return { configured: true, ready: false };
     },
+    async vodStart(input, identity) {
+      const data = await call('/vod/start', 'POST', { ...input, user_id: identity });
+      if (!/^[0-9a-f-]{36}$/i.test(data?.session_id || ''))
+        throw new RoomError('Sesión VOD inválida.', 503);
+      return { id: data.session_id };
+    },
+    async vodStatus(id, identity) {
+      const data = await call('/vod/status', 'POST', { session_id: id, user_id: identity });
+      if (!['preparing', 'ready', 'failed'].includes(data?.state))
+        throw new RoomError('Estado VOD inválido.', 503);
+      if (data.state !== 'ready') return { state: data.state, error: data.error };
+      let target;
+      try { target = new URL(data.playlist_url); }
+      catch { throw new RoomError('URL VOD inválida.', 503); }
+      if (target.protocol !== 'https:' || target.origin !== cfg.url ||
+          !/^\/vod\/[a-f0-9-]{36}\/index\.m3u8$/.test(target.pathname) ||
+          !/^[a-f0-9]{64}$/.test(target.searchParams.get('token') || ''))
+        throw new RoomError('El relay devolvió una URL VOD no autorizada.', 503);
+      return { state: 'ready', url: target.href, duration: Number(data.duration) || 0 };
+    },
+    async vodStop(id, identity) {
+      return call('/vod/stop', 'POST', { session_id: id, user_id: identity });
+    },
     async directAudioStart(url, identity) {
       const result = await call('/direct-audio/start', 'POST', { url, user_id: identity });
       if (!/^[0-9a-f-]{36}$/i.test(result?.session_id || ''))

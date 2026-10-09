@@ -226,6 +226,42 @@ export class RoomsService {
     const rooms = await Promise.all((account.rooms || []).map((slug) => read(this.store, `room/${slug}`)));
     return rooms.filter((room) => room && !room.deleted && room.ownerId === account.id).map((room) => roomView(room, account));
   }
+  async startVod(slug, who, input) {
+    const room = await this.access(slug, who);
+    if (!who.sessionId) throw new RoomError('Inicia sesión para reproducir.', 401);
+    const torrent = input.kind === 'torrent';
+    if (!torrent && input.kind !== 'https') throw new RoomError('Tipo de vídeo inválido.', 400);
+    let data;
+    try {
+      data = JSON.parse(unseal(input.ticket, (torrent ? 'torrent:' : 'direct-audio:') +
+        slug + ':' + who.sessionId, this.env));
+    } catch {
+      throw new RoomError('La fuente de vídeo ha caducado. Vuelve a buscar el título.', 403);
+    }
+    if (!Number.isSafeInteger(data?.expires) || data.expires < this.clock() || data.expires > this.clock() + 600)
+      throw new RoomError('Autorización de vídeo caducada.', 403);
+    let source;
+    if (torrent) {
+      if (!/^[a-f0-9]{40}$/.test(data.hash || '') || (data.fileIdx != null &&
+          (!Number.isSafeInteger(data.fileIdx) || data.fileIdx < 0 || data.fileIdx > 10000)))
+        throw new RoomError('Torrent no válido.', 403);
+      source = { info_hash: data.hash, file_idx: data.fileIdx };
+    } else {
+      if (typeof data.url !== 'string' || data.url.length > 2000 || !data.url.startsWith('https://'))
+        throw new RoomError('URL de vídeo inválida.', 403);
+      source = { url: data.url };
+    }
+    return this.relayFor(room).vodStart(source, who.sessionId);
+  }
+  async vodCommand(slug, who, action, id) {
+    const room = await this.access(slug, who);
+    if (!who.sessionId || !/^[a-f0-9-]{36}$/i.test(id || ''))
+      throw new RoomError('Sesión de vídeo no válida.', 400);
+    const relay = this.relayFor(room);
+    if (action === 'vod-status') return relay.vodStatus(id, who.sessionId);
+    if (action === 'vod-stop') return relay.vodStop(id, who.sessionId);
+    throw new RoomError('Acción de vídeo desconocida.', 400);
+  }
   async directAudio(slug, who, action, input) {
     const room = await this.access(slug, who);
     if (!who.sessionId) throw new RoomError('Inicia sesión para reproducir.', 401);
