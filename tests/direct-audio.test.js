@@ -148,3 +148,47 @@ test('HTTPS Range data remains buffered until the VOD proxy attaches its reader'
   assert.equal(remote.contentRange, 'bytes 0-4095/20000');
   remote.close();
 });
+
+test('HTTPS VOD accepts a cached TorBox movie larger than 24 GiB using partial reads', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { EventEmitter } = await import('node:events');
+  const size = 26665543870; // 24.83 GiB, actual size of the reported movie.
+  async function download(range, status, headers, expectedMessage) {
+    let requestOptions;
+    const fakeTransport = (_url, options, callback) => {
+      requestOptions = options;
+      const req = new EventEmitter();
+      req.destroy = () => {};
+      req.end = () => queueMicrotask(() => {
+        const response = new PassThrough();
+        response.statusCode = status;
+        response.headers = headers;
+        callback(response);
+        response.end(Buffer.from('test-source-payload'));
+      });
+      return req;
+    };
+    if (expectedMessage) {
+      await assert.rejects(openDirectMedia('https://cdn.example.org/barnyard.mkv', {
+        range, resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+        transport: fakeTransport,
+      }), expectedMessage);
+      return;
+    }
+    const result = await openDirectMedia('https://cdn.example.org/barnyard.mkv', {
+      range, resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+      transport: fakeTransport,
+    });
+    assert.equal(requestOptions.headers.Range, range ?? undefined);
+    const chunks = [];
+    for await (const data of result.stream) chunks.push(data);
+    assert.equal(Buffer.concat(chunks).toString(), 'test-source-payload');
+    result.close();
+  }
+  await download('bytes=0-18', 206,
+    { 'content-range': 'bytes 0-18/' + size, 'content-length': '19' });
+  await download(null, 200, { 'content-length': String(size) });
+  await download('bytes=0-18', 206,
+    { 'content-range': 'bytes 0-18/' + (80 * 1024 ** 3), 'content-length': '19' },
+    /64 GiB/);
+});

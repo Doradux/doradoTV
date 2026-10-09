@@ -8,7 +8,10 @@ import ipaddr from 'ipaddr.js';
 // DNS is resolved and pinned independently at EACH redirect, preventing SSRF.
 const MAX_SESSIONS = 24;
 const MAX_REDIRECTS = 4;
-const MAX_BYTES = 24 * 1024 ** 3;
+// File metadata describes the entire title, not bytes fetched to serve a VOD segment.
+// Permit large seekable files while bounding each individual upstream connection.
+const MAX_MEDIA_BYTES = 64 * 1024 ** 3;
+const MAX_RESPONSE_BYTES = 1024 ** 3;
 const ACTIVE_MS = 2 * 60 * 60 * 1000;
 const IDLE_MS = 3 * 60 * 1000;
 const equals = (a, b) => {
@@ -71,8 +74,10 @@ export async function openDirectMedia(value, {
             return;
           }
           const length = Number(res.headers['content-length']);
-          if (Number.isFinite(length) && length > MAX_BYTES) {
-            res.destroy(); reject(Error('El archivo supera el límite de 24 GiB.')); return;
+          const overallSize = /^bytes\s+\d+-\d+\/(\d+)$/i.exec(res.headers['content-range'] || '');
+          const advertisedSize = overallSize ? Number(overallSize[1]) : (res.statusCode === 200 ? length : null);
+          if (Number.isFinite(advertisedSize) && advertisedSize > MAX_MEDIA_BYTES) {
+            res.destroy(); reject(Error('El archivo supera el máximo de 64 GiB por fuente.')); return;
           }
           if (range && res.statusCode !== 206 && !/^bytes=0-?$/.test(range)) {
             res.destroy(); reject(Error('La fuente no admite saltos de tiempo por HTTP Range.')); return;
@@ -80,7 +85,7 @@ export async function openDirectMedia(value, {
           let total = 0;
           res.on('data', (chunk) => {
             total += chunk.length;
-            if (total > MAX_BYTES) res.destroy(Error('Archivo demasiado grande.'));
+            if (total > MAX_RESPONSE_BYTES) res.destroy(Error('El origen superó el límite de 1 GiB por solicitud.'));
           });
           resolve({ stream: res, status: res.statusCode, length: Number.isFinite(length) ? length : null,
             contentRange: res.headers['content-range'] || null,
