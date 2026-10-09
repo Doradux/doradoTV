@@ -1,17 +1,31 @@
+import { installUint8EncodingCompat } from './uint8-compat.js';
+
+// The vendored WebTorrent 3 browser bundle is ES module code with a default export.
+// Loading it as a classic script does not expose any browser-global constructor.
+let enginePromise;
+export function loadTorrentEngine(importEngine = () => {
+  const moduleUrl = new URL('/webtorrent.min.js', window.location.origin).href;
+  return import(/* @vite-ignore */ moduleUrl);
+}) {
+  if (!enginePromise) {
+    installUint8EncodingCompat();
+    enginePromise = importEngine().then((module) => {
+      if (typeof module?.default !== 'function') throw Error('El archivo del motor torrent no es compatible.');
+      return module.default;
+    }).catch((error) => {
+      enginePromise = null; // Let Retry load again after a temporary network problem.
+      console.warn('WebTorrent module loading failed:', error);
+      throw Error('No se pudo cargar WebTorrent. Comprueba la conexión y vuelve a intentarlo.');
+    });
+  }
+  return enginePromise;
+}
+
 // WebTorrent uses WebRTC-compatible peers; traditional BitTorrent peers are unavailable in browsers.
 export async function startBrowserTorrent(video, source, { onStatus, isCurrent }) {
   if (!/^[a-f0-9]{40}$/i.test(source?.infoHash || '')) throw Error('Hash torrent no válido.');
-  if (!window.WebTorrent) {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '/webtorrent.min.js'; script.async = true;
-      script.onload = resolve;
-      script.onerror = () => reject(Error('No se pudo cargar el reproductor torrent.'));
-      document.head.append(script);
-    });
-  }
-  const WebTorrent = window.WebTorrent;
-  if (!WebTorrent) throw Error('No se pudo iniciar el motor torrent.');
+  const WebTorrent = await loadTorrentEngine();
+  if (!isCurrent()) throw Error('Reproducción cancelada.');
   if (!WebTorrent.WEBRTC_SUPPORT) throw Error('Este navegador no admite torrents mediante WebRTC.');
   if (!('serviceWorker' in navigator)) throw Error('Este navegador no admite reproducción torrent.');
   const registration = await navigator.serviceWorker.register('/torrent-worker.js', { scope: '/' });
