@@ -1,6 +1,7 @@
-import { Film, Puzzle, X, Search, Play, ArrowLeft, Trash2, Plus } from 'lucide';
+import { Film, Puzzle, X, Search, Play, Pause, RotateCcw, RotateCw, Volume2, Maximize, ArrowLeft, Trash2, Plus } from 'lucide';
 import { iconSvg, escapeHtml } from './ui.js';
 import './stremio.css';
+import { formatPlaybackTime, seasonGroups, seekTarget } from './vod-utils.js';
 
 const e = escapeHtml;
 const poster = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="sa-no-poster">${iconSvg(Film)}</div>`;
@@ -25,33 +26,25 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'sa-open';
-  open.innerHTML = `${iconSvg(Film, 'h-4 w-4')}<span>Cine y series</span>`;
-  header.prepend(open);
+  open.innerHTML = `${iconSvg(Puzzle, 'h-4 w-4')}<span>Gestión de addons</span>`;
+  if (session.owner) header.prepend(open);
 
   const overlay = document.createElement('div');
-  overlay.className = 'sa-overlay';
+  overlay.className = 'sa-cinema-page';
+  overlay.id = 'sa-cinema-page';
   overlay.hidden = true;
-  overlay.innerHTML = `<section class="sa-dialog" role="dialog" aria-modal="true" aria-label="Cine y series">
+  overlay.innerHTML = `<section class="sa-dialog" aria-label="Cine y series">
     <header class="sa-heading">
-      <div class="sa-heading-title">${iconSvg(Film)}<div><strong>Cine y series</strong><small>Addons compartidos por la sala</small></div></div>
-      <button class="sa-icon" data-act="close" aria-label="Cerrar">${iconSvg(X)}</button>
+      <div class="sa-heading-title">${iconSvg(Film)}<div><strong>Cine y series</strong><small>Explora los catálogos y fuentes compartidos por la sala</small></div></div>
+      <button class="sa-icon" data-act="close" aria-label="Volver a la lista de canales" title="Volver a la lista de canales">${iconSvg(X)}</button>
     </header>
     <div class="sa-layout">
-      <aside class="sa-sidebar">
-        <div class="sa-side-title">${iconSvg(Puzzle, 'h-4 w-4')} Addons de la sala</div>
-        <div id="sa-addons" class="sa-addon-list"></div>
-        <form id="sa-install" class="sa-install" hidden>
-          <label for="sa-url">Instalar addon</label>
-          <input id="sa-url" type="text" inputmode="url" placeholder="https://ejemplo.com/manifest.json o stremio://..." maxlength="1500" required autocomplete="off" spellcheck="false">
-          <button type="submit" class="sa-primary">${iconSvg(Plus, 'h-4 w-4')} Instalar</button>
-          <small>Solo el propietario puede modificar los addons. Utiliza fuentes autorizadas y de confianza.</small>
-        </form>
-      </aside>
       <div class="sa-main">
         <div id="sa-browse">
+          <div class="sa-content-switch" role="group" aria-label="Buscar por tipo de contenido"><button type="button" data-kind="movie" aria-pressed="true">Películas</button><button type="button" data-kind="series" aria-pressed="false">Series</button></div>
           <div class="sa-toolbar">
             <select id="sa-catalog" aria-label="Elegir catálogo"></select>
-            <form id="sa-search"><input id="sa-search-input" type="search" placeholder="Buscar películas o series…" maxlength="100" aria-label="Buscar películas o series"><button type="submit" class="sa-icon" aria-label="Buscar">${iconSvg(Search)}</button></form>
+            <form id="sa-search"><input id="sa-search-input" type="search" placeholder="Buscar películas…" maxlength="100" aria-label="Buscar películas o series"><button type="submit" class="sa-icon" aria-label="Buscar">${iconSvg(Search)}</button></form>
           </div>
           <p id="sa-message" class="sa-message" role="status"></p>
           <div id="sa-grid" class="sa-grid"></div>
@@ -64,19 +57,88 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
             <div id="sa-episodes"></div>
             <p id="sa-stream-status" class="sa-message" role="status"></p>
             <div id="sa-streams" class="sa-streams"></div>
-            <video id="sa-video" controls playsinline preload="none"></video>
+            <button id="sa-play-selected" type="button" class="sa-primary sa-play-selected" hidden disabled>Elegir una fuente</button>
+            <p id="sa-source-help" class="sa-muted" hidden></p>
+            <div id="sa-player" class="sa-player" hidden>
+              <video id="sa-video" playsinline preload="metadata" tabindex="0" aria-label="Reproductor de películas y series"></video>
+              <div class="sa-playback-controls" aria-label="Controles de reproducción bajo demanda">
+                <input id="sa-timeline" type="range" min="0" max="1000" step="1" value="0" disabled aria-label="Posición en la película o episodio">
+                <div class="sa-playback-row">
+                  <div class="sa-playback-buttons">
+                    <button id="sa-play" type="button" data-act="toggle-play" disabled aria-label="Reproducir" title="Reproducir">${iconSvg(Play, 'h-5 w-5')}</button>
+                    <button type="button" data-seek="-10" disabled aria-label="Retroceder 10 segundos" title="Retroceder 10 segundos">${iconSvg(RotateCcw, 'h-5 w-5')}<span>10</span></button>
+                    <button type="button" data-seek="10" disabled aria-label="Avanzar 10 segundos" title="Avanzar 10 segundos">${iconSvg(RotateCw, 'h-5 w-5')}<span>10</span></button>
+                  </div>
+                  <output id="sa-time" for="sa-timeline">00:00 / --:--</output>
+                  <div class="sa-playback-options"><label for="sa-volume" aria-label="Volumen">${iconSvg(Volume2, 'h-4 w-4')}</label><input id="sa-volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen"><button type="button" data-act="fullscreen" aria-label="Pantalla completa" title="Pantalla completa">${iconSvg(Maximize, 'h-5 w-5')}</button></div>
+                </div>
+              </div>
+            </div>
             <div id="sa-subtitles"></div>
           </div>
         </div>
       </div>
     </div>
   </section>`;
-  app.append(overlay);
-  const $ = (selector) => overlay.querySelector(selector);
-  const state = { addons: [], catalogs: [], metas: [], owner: false, selected: 0, skip: 0, search: '', current: null, streams: [], subtitles: [], lastVideo: '' };
-  let hls = null, subtitleObjectUrl = '', browseNonce = 0, streamNonce = 0;
+  app.querySelector('.app-shell').append(overlay);
+  const manage = document.createElement('div');
+  manage.className = 'sa-overlay';
+  manage.hidden = true;
+  manage.innerHTML = `<section class="sa-manage-dialog" role="dialog" aria-modal="true" aria-label="Gestión de addons">
+    <header class="sa-heading"><div class="sa-heading-title">${iconSvg(Puzzle)}<div><strong>Gestión de addons</strong><small>Solo el propietario puede instalar o eliminar addons de esta sala</small></div></div>
+    <button type="button" class="sa-icon" data-manage-close aria-label="Cerrar gestión de addons">${iconSvg(X)}</button></header>
+      <aside class="sa-sidebar">
+        <div class="sa-side-title">${iconSvg(Puzzle, 'h-4 w-4')} Addons de la sala</div>
+        <div id="sa-addons" class="sa-addon-list"></div>
+        <form id="sa-install" class="sa-install" hidden>
+          <label for="sa-url">Instalar addon</label>
+          <input id="sa-url" type="text" inputmode="url" placeholder="https://ejemplo.com/manifest.json o stremio://..." maxlength="1500" required autocomplete="off" spellcheck="false">
+          <button type="submit" class="sa-primary">${iconSvg(Plus, 'h-4 w-4')} Instalar</button>
+          <small>Solo el propietario puede modificar los addons. Utiliza fuentes autorizadas y de confianza.</small>
+        </form>
+      </aside>
+    <p id="sa-manage-status" class="sa-message" role="status"></p>
+  </section>`;
+  app.append(manage);
+  const $ = (selector) => overlay.querySelector(selector) || manage.querySelector(selector);
+  const state = { addons: [], catalogs: [], metas: [], owner: false, kind: 'movie', selected: 0, skip: 0, search: '', current: null, seasons: [], seasonIndex: 0, episodeId: '', streams: [], subtitles: [], lastVideo: '', activeSource: -1, selectedSource: -1 };
+  let hls = null, subtitleObjectUrl = '', browseNonce = 0, streamNonce = 0, detailNonce = 0, scrubbing = false;
   const video = $('#sa-video');
   const tell = (message, detail = false) => { $(detail ? '#sa-stream-status' : '#sa-message').textContent = message; };
+  const timeline = $('#sa-timeline');
+  const player = $('#sa-player');
+  video.volume = Number($('#sa-volume').value);
+
+  function seekBounds() {
+    if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.seekable.length) return null;
+    const start = Math.max(0, video.seekable.start(0));
+    const end = Math.min(video.duration, video.seekable.end(video.seekable.length - 1));
+    return end > start ? { start, end } : null;
+  }
+
+  function updatePlaybackControls() {
+    const hasSource = state.activeSource >= 0;
+    const bounds = seekBounds();
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    $('#sa-play').disabled = !hasSource;
+    $('#sa-play').innerHTML = video.paused ? iconSvg(Play, 'h-5 w-5') : iconSvg(Pause, 'h-5 w-5');
+    $('#sa-play').title = video.paused ? 'Reproducir' : 'Pausar';
+    $('#sa-play').setAttribute('aria-label', $('#sa-play').title);
+    timeline.disabled = !hasSource || !bounds;
+    overlay.querySelectorAll('[data-seek]').forEach((button) => { button.disabled = !hasSource || !bounds; });
+    if (!scrubbing) timeline.value = duration ? String(Math.round(Math.min(video.currentTime / duration, 1) * 1000)) : '0';
+    $('#sa-time').textContent = `${formatPlaybackTime(video.currentTime)} / ${duration ? formatPlaybackTime(duration) : '--:--'}`;
+    timeline.style.setProperty('--seek-fill', `${timeline.value / 10}%`);
+  }
+
+  function seekBy(seconds) {
+    const bounds = seekBounds();
+    if (!bounds) return;
+    const target = seekTarget(video.currentTime, seconds, bounds.start, bounds.end);
+    if (target !== null) video.currentTime = target;
+    updatePlaybackControls();
+  }
+
   const stopVideo = () => {
     video.pause();
     hls?.destroy(); hls = null;
@@ -85,18 +147,34 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     video.load();
     if (subtitleObjectUrl) URL.revokeObjectURL(subtitleObjectUrl);
     subtitleObjectUrl = '';
+    scrubbing = false;
+    player.hidden = true;
+    state.activeSource = -1;
+    updatePlaybackControls();
   };
   const catalogLabel = (c) => `${c.addon.manifest.name} · ${c.catalog.name}`;
   const addOnMarkup = (addon) => `<div class="sa-addon"><div><strong>${e(addon.manifest.name)}</strong><small>${e(addon.manifest.description || addon.manifest.id)}</small></div>${state.owner ? `<button type="button" title="Eliminar addon" aria-label="Eliminar ${e(addon.manifest.name)}" data-remove="${e(addon.id)}">${iconSvg(Trash2, 'h-4 w-4')}</button>` : ''}</div>`;
 
-  function renderAddons() {
-    $('#sa-install').hidden = !state.owner;
-    $('#sa-addons').innerHTML = state.addons.length ? state.addons.map(addOnMarkup).join('') : '<p class="sa-muted">Aún no hay addons instalados.</p>';
-    state.catalogs = state.addons.flatMap((addon) => addon.manifest.catalogs.filter((c) => !c.required).map((catalog) => ({ addon, catalog })));
+  function renderCatalogs() {
+    state.catalogs = state.addons.flatMap((addon) => addon.manifest.catalogs
+      .filter((catalog) => catalog.type === state.kind && !catalog.required)
+      .map((catalog) => ({ addon, catalog })));
     $('#sa-catalog').innerHTML = state.catalogs.length
       ? state.catalogs.map((c, i) => `<option value="${i}">${e(catalogLabel(c))}</option>`).join('')
-      : '<option value="">No hay catálogos disponibles</option>';
+      : '<option value="">No hay catálogos de este tipo</option>';
     state.selected = 0;
+    overlay.querySelectorAll('[data-kind]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.kind === state.kind)));
+    const input = $('#sa-search-input');
+    input.placeholder = state.kind === 'movie' ? 'Buscar películas…' : 'Buscar series…';
+    input.setAttribute('aria-label', input.placeholder);
+  }
+
+  function renderAddons() {
+    $('#sa-install').hidden = !state.owner;
+    $('#sa-addons').innerHTML = state.addons.length
+      ? state.addons.map(addOnMarkup).join('')
+      : '<p class="sa-muted">Aún no hay addons instalados.</p>';
+    renderCatalogs();
   }
 
   async function refresh() {
@@ -104,37 +182,35 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     state.addons = response.addons;
     state.owner = response.owner;
     renderAddons();
-    await browse();
+    if (!overlay.hidden) await browse();
   }
 
   async function browse(append = false) {
-    const current = ++browseNonce;
+    const current = ++browseNonce, query = state.search.trim();
     const selection = state.catalogs[state.selected];
-    if (!selection) {
+    if (!query && !selection) {
       state.metas = [];
-      $('#sa-grid').innerHTML = '<p class="sa-muted">El propietario puede instalar un addon con catálogo para comenzar.</p>';
+      $('#sa-grid').innerHTML = '<p class="sa-muted">Instala un addon con catálogo (por ejemplo Cinemeta). Los addons que solo ofrecen streams no sirven para buscar títulos.</p>';
       $('#sa-more').hidden = true; tell(''); return;
     }
-    tell('Cargando catálogo…');
+    tell(query ? 'Buscando en todos los motores de los addons de la sala…' : 'Cargando catálogo…');
     try {
-      const query = state.search.trim();
       if (!query && selection.catalog.searchRequired) {
         tell('Introduce un título en el buscador para consultar este catálogo.');
         $('#sa-grid').innerHTML = ''; $('#sa-more').hidden = true; return;
       }
-      if (query && !selection.catalog.search) {
-        tell('Este catálogo no admite búsquedas. Selecciona uno con búsqueda compatible.');
-        $('#sa-grid').innerHTML = ''; $('#sa-more').hidden = true; return;
-      }
-      const data = await api(room, 'catalog', { addonId: selection.addon.id, type: selection.catalog.type, catalogId: selection.catalog.id,
-        search: query, skip: append ? state.skip : 0 });
-      if (current !== browseNonce) return;
-      const metas = data.metas.map((m) => ({ ...m, addonId: selection.addon.id }));
-      state.metas = append ? state.metas.concat(metas) : metas;
-      state.skip = append ? state.skip + 100 : 100;
-      $('#sa-grid').innerHTML = state.metas.length ? state.metas.map(card).join('') : '<p class="sa-muted">No hay títulos para mostrar.</p>';
-      $('#sa-more').hidden = !selection.catalog.paginated || metas.length < 20;
-      tell(`${state.metas.length} títulos mostrados`);
+      const data = query
+        ? await api(room, 'search', { type: state.kind, search: query })
+        : await api(room, 'catalog', { addonId: selection.addon.id, type: selection.catalog.type,
+          catalogId: selection.catalog.id, skip: append ? state.skip : 0 });
+      if (current !== browseNonce || overlay.hidden) return;
+      const metas = query ? data.metas : data.metas.map((m) => ({ ...m, addonId: selection.addon.id }));
+      state.metas = append && !query ? state.metas.concat(metas) : metas;
+      state.skip = append && !query ? state.skip + 100 : 100;
+      $('#sa-grid').innerHTML = state.metas.length ? state.metas.map(card).join('') : '<p class="sa-muted">No se han encontrado títulos en los catálogos disponibles.</p>';
+      $('#sa-more').hidden = !!query || !selection?.catalog?.paginated || metas.length < 20;
+      tell(query ? `Encontrados ${state.metas.length} títulos entre ${data.engines} motores.${data.warnings?.length ? ` ${data.warnings.length} motores no respondieron.` : ''}`
+        : `${state.metas.length} títulos mostrados`);
     } catch (err) {
       if (current !== browseNonce) return;
       tell(err.message); if (!append) $('#sa-grid').innerHTML = '';
@@ -142,11 +218,36 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     }
   }
 
+  function renderEpisodes() {
+    const group = state.seasons[state.seasonIndex];
+    if (!group) return;
+    $('#sa-season').value = String(group.season);
+    $('#sa-episode-list').innerHTML = group.episodes.map((ep, index) => {
+      const active = ep.id === state.episodeId;
+      const number = Number.isInteger(ep.episode) ? `E${ep.episode}` : `${index + 1}`;
+      return `<button type="button" class="sa-episode ${active ? 'is-active' : ''}" data-episode="${e(ep.id)}" aria-pressed="${active}">
+        ${ep.thumbnail ? `<img src="${e(ep.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}
+        <span><small>${e(number)}</small><strong>${e(ep.title || `Episodio ${index + 1}`)}</strong></span>
+        ${active ? iconSvg(Play, 'h-4 w-4') : ''}
+      </button>`;
+    }).join('');
+  }
+
+  async function chooseEpisode(id) {
+    if (!state.seasons[state.seasonIndex]?.episodes.some((ep) => ep.id === id)) return;
+    state.episodeId = id;
+    renderEpisodes();
+    await loadStreams(id);
+  }
+
   async function detail(index) {
+    const ticket = ++detailNonce;
     const preview = state.metas[index];
     if (!preview) return;
     stopVideo(); ++streamNonce;
     state.current = preview;
+    state.seasons = [];
+    state.episodeId = '';
     $('#sa-browse').hidden = true;
     $('#sa-detail').hidden = false;
     $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${poster(preview)}<div><h2>${e(preview.name)}</h2><p>${e(preview.description || '')}</p><small>${preview.type === 'series' ? 'Serie' : 'Película'} · ${e(preview.releaseInfo || '')}</small></div></div>`;
@@ -156,18 +257,20 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     tell('Cargando información…', true);
     let info = preview;
     try { info = (await api(room, 'meta', { addonId: preview.addonId, type: preview.type, id: preview.id })).meta; }
-    catch { /* A stream-only addon can still offer a playable movie. */ }
-    if (state.current !== preview) return;
-    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${poster(info)}<div><h2>${e(info.name || preview.name)}</h2><p>${e(info.description || preview.description || '')}</p><small>${info.type === 'series' ? 'Serie' : 'Película'} · ${e(info.releaseInfo || '')}</small></div></div>`;
-    const episodes = info.type === 'series' ? (info.videos || []).filter((v) => v.id) : [];
-    if (episodes.length) {
-      $('#sa-episodes').innerHTML = `<label class="sa-episode-label">Episodio <select id="sa-episode">${episodes.map((ep) => `<option value="${e(ep.id)}">T${ep.season ?? '?'} E${ep.episode ?? '?'} — ${e(ep.title || ep.id)}</option>`).join('')}</select></label>`;
-      $('#sa-episode').onchange = (event) => loadStreams(event.target.value);
-      await loadStreams(episodes[0].id);
-    } else if (info.type === 'movie') {
-      await loadStreams(info.id);
+    catch { /* Un addon sin metadatos aún puede ofrecer reproducción de películas. */ }
+    if (ticket !== detailNonce || state.current !== preview || overlay.hidden) return;
+    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${poster(info)}<div><h2>${e(info.name || preview.name)}</h2><p>${e(info.description || preview.description || '')}</p><small>${preview.type === 'series' ? 'Serie' : 'Película'} · ${e(info.releaseInfo || '')}</small></div></div>`;
+    state.seasons = preview.type === 'series' ? seasonGroups(info.videos) : [];
+    if (state.seasons.length) {
+      state.seasonIndex = 0;
+      state.episodeId = state.seasons[0].episodes[0].id;
+      $('#sa-episodes').innerHTML = `<div class="sa-seasons"><label for="sa-season">Temporada</label><select id="sa-season" aria-label="Seleccionar temporada">${state.seasons.map((group) => `<option value="${group.season}">${e(group.label)} · ${group.episodes.length} episodios</option>`).join('')}</select></div><div id="sa-episode-list" class="sa-episode-list" aria-label="Episodios de la temporada"></div>`;
+      renderEpisodes();
+      await loadStreams(state.episodeId);
+    } else if (preview.type === 'movie') {
+      await loadStreams(info.id || preview.id);
     } else {
-      tell('Este addon no proporciona la lista de episodios.', true);
+      tell('Este addon no proporciona temporadas o episodios para la serie.', true);
     }
   }
 
@@ -175,17 +278,44 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     const current = ++streamNonce;
     state.lastVideo = id;
     stopVideo();
+    state.streams = [];
+    state.selectedSource = -1;
+    $('#sa-play-selected').hidden = true;
+    $('#sa-source-help').hidden = true;
     $('#sa-subtitles').innerHTML = '';
     $('#sa-streams').innerHTML = '';
     tell('Buscando fuentes de reproducción…', true);
     try {
-      const { streams } = await api(room, 'streams', { type: state.current.type, id });
+      const { streams, warnings = [] } = await api(room, 'streams', { type: state.current.type, id });
       if (current !== streamNonce) return;
-      state.streams = streams;
-      $('#sa-streams').innerHTML = streams.length ? streams.map((s, i) => `<button type="button" class="sa-source" data-source="${i}" ${s.supported ? '' : 'disabled'}>
-        ${iconSvg(Play, 'h-4 w-4')}<span><strong>${e(s.name)}</strong><small>${e(s.title || (s.supported ? 'Reproducción directa' : `Formato ${s.kind} no compatible con el navegador`))}</small></span></button>`).join('') : '<p class="sa-muted">Ningún addon devolvió fuentes para este título.</p>';
-      tell(streams.length ? 'Elige una fuente para reproducir.' : 'No hay fuentes disponibles.', true);
+      state.streams = [...streams].sort((a, b) => (b.seeders ?? -1) - (a.seeders ?? -1));
+      const hasStreamAddon = state.addons.some((addon) => addon.manifest.resources.some((resource) => resource.name === 'stream' && resource.types.includes(state.current.type)));
+      $('#sa-streams').innerHTML = streams.length
+        ? state.streams.map((s, i) => `<button type="button" class="sa-source" data-source="${i}" aria-pressed="false">
+            ${iconSvg(Play, 'h-4 w-4')}<span><strong>${e(s.name)}</strong>
+            <small>${e(s.title || (s.supported ? 'Vídeo directo' : s.kind === 'torrent' ? 'Fuente BitTorrent' : `Formato ${s.kind}`))}</small>
+            <small class="sa-source-meta">${s.seeders !== null ? `${s.seeders.toLocaleString('es')} seeders · ` : ''}${s.kind === 'torrent' ? 'Torrent · Requiere un cliente externo' : s.supported ? 'Reproducible aquí' : 'No compatible con el navegador'}</small></span></button>`).join('')
+        : `<p class="sa-muted">${hasStreamAddon ? 'Los addons de reproducción instalados no devolvieron fuentes para este título.' : 'Instala un addon que proporcione fuentes de reproducción autorizadas. Los catálogos como Cinemeta solo ofrecen información.'}</p>`;
+      if (warnings.length) $('#sa-streams').insertAdjacentHTML('beforeend', `<p class="sa-muted sa-addon-warnings">${warnings.map((warning) => `${e(warning.addon)}: ${e(warning.reason)}`).join(' · ')}</p>`);
+      tell(state.streams.length ? 'Elige una fuente. Los seeders indican usuarios que comparten cada torrent; no se elige un peer individual.' : warnings.length ? 'Algunos addons no responden; consulta el detalle.' : 'No hay fuentes disponibles.', true);
+
     } catch (error) { if (current === streamNonce) tell(error.message, true); }
+  }
+
+  function selectSource(index) {
+    const source = state.streams[index];
+    if (!source) return;
+    state.selectedSource = index;
+    $('#sa-streams').querySelectorAll('[data-source]').forEach((button) =>
+      button.setAttribute('aria-pressed', String(Number(button.dataset.source) === index)));
+    const action = $('#sa-play-selected'), help = $('#sa-source-help');
+    action.hidden = false; help.hidden = false;
+    action.disabled = !(source.supported || (source.kind === 'torrent' && source.infoHash));
+    action.textContent = source.supported ? 'Reproducir fuente seleccionada'
+      : source.kind === 'torrent' && source.infoHash ? 'Abrir torrent en cliente externo' : 'Formato no compatible';
+    help.textContent = source.kind === 'torrent'
+      ? 'DoradoTV no reproduce torrents desde Netlify. Puedes abrir esta fuente con un cliente torrent de tu dispositivo, sujeto a tus derechos de uso.'
+      : source.supported ? 'La reproducción directa se iniciará en el navegador.' : 'Este formato no puede reproducirse directamente.';
   }
 
   async function playSource(index) {
@@ -193,6 +323,9 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     if (!source?.supported) return;
     const nonce = ++streamNonce;
     stopVideo();
+    state.activeSource = index;
+    player.hidden = false;
+    updatePlaybackControls();
     stopLive();
     const path = new URL(source.url).pathname.toLowerCase();
     try {
@@ -249,51 +382,147 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     }
   }
 
-  open.onclick = async () => {
-    overlay.hidden = false;
-    document.body.style.overflow = 'hidden';
-    $('#sa-message').textContent = 'Cargando addons de la sala…';
-    try { await refresh(); } catch (error) { tell(error.message); }
-  };
-  const close = () => {
-    overlay.hidden = true; document.body.style.overflow = '';
-    ++browseNonce; ++streamNonce; state.current = null; stopVideo();
+  const closeManagement = () => {
+    manage.hidden = true;
+    document.body.style.overflow = '';
     open.focus();
   };
+  open.onclick = async () => {
+    manage.hidden = false;
+    document.body.style.overflow = 'hidden';
+    $('#sa-manage-status').textContent = 'Cargando addons de la sala…';
+    try { await refresh(); $('#sa-manage-status').textContent = ''; }
+    catch (error) { $('#sa-manage-status').textContent = error.message; }
+  };
+  manage.addEventListener('click', async (event) => {
+    if (event.target === manage || event.target.closest('[data-manage-close]')) { closeManagement(); return; }
+    const remove = event.target.closest('[data-remove]');
+    if (remove && state.owner && confirm('¿Eliminar este addon de la sala?')) {
+      try { await api(room, 'remove', { addonId: remove.dataset.remove }); await refresh(); $('#sa-manage-status').textContent = 'Addon eliminado.'; }
+      catch (error) { $('#sa-manage-status').textContent = error.message; }
+    }
+  });
+  manage.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.stopPropagation(); closeManagement(); }
+  });
+  const close = () => app.querySelector('#media-channels').click();
   overlay.addEventListener('click', async (event) => {
     if (event.target === overlay || event.target.closest('[data-act="close"]')) { close(); return; }
     if (event.target.closest('[data-act="back"]')) {
-      ++streamNonce; stopVideo(); $('#sa-detail').hidden = true; $('#sa-browse').hidden = false; state.current = null; return;
+      ++streamNonce; ++detailNonce; stopVideo(); $('#sa-detail').hidden = true; $('#sa-browse').hidden = false; state.current = null; return;
     }
+    const switcher = event.target.closest('[data-kind]');
+    if (switcher && state.kind !== switcher.dataset.kind) {
+      state.kind = switcher.dataset.kind;
+      state.search = '';
+      $('#sa-search-input').value = '';
+      renderCatalogs();
+      browse();
+      return;
+    }
+    const seek = event.target.closest('[data-seek]');
+    if (seek) { seekBy(Number(seek.dataset.seek)); return; }
+    const action = event.target.closest('[data-act]');
+    if (action?.dataset.act === 'toggle-play') {
+      if (!state.streams[state.activeSource]?.supported) return;
+      if (video.paused) video.play().catch((error) => tell(`No se pudo reproducir: ${error.message}`, true));
+      else video.pause();
+      return;
+    }
+    if (action?.dataset.act === 'fullscreen') {
+      if (document.fullscreenElement === player) document.exitFullscreen?.();
+      else player.requestFullscreen?.().catch(() => tell('No se pudo activar pantalla completa.', true));
+      return;
+    }
+    const episode = event.target.closest('[data-episode]');
+    if (episode) { await chooseEpisode(episode.dataset.episode); return; }
     const film = event.target.closest('[data-film]');
     if (film) { await detail(Number(film.dataset.film)); return; }
     const source = event.target.closest('[data-source]');
-    if (source) { await playSource(Number(source.dataset.source)); return; }
-    const remove = event.target.closest('[data-remove]');
-    if (remove && state.owner && confirm('¿Eliminar este addon de la sala?')) {
-      try { await api(room, 'remove', { addonId: remove.dataset.remove }); await refresh(); }
-      catch (error) { tell(error.message); }
-    }
+    if (source) { selectSource(Number(source.dataset.source)); return; }
+
   });
   overlay.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.stopPropagation(); close(); } });
   $('#sa-catalog').onchange = (event) => { state.selected = Number(event.target.value); state.search = ''; $('#sa-search-input').value = ''; browse(); };
   $('#sa-search').onsubmit = (event) => { event.preventDefault(); state.search = $('#sa-search-input').value; browse(); };
   $('#sa-more').onclick = () => browse(true);
+  $('#sa-play-selected').onclick = async () => {
+    const index = state.selectedSource, source = state.streams[index];
+    if (!source) return;
+    if (source.supported) { await playSource(index); return; }
+    if (source.kind === 'torrent' && source.infoHash) {
+      const name = encodeURIComponent(state.current?.name || source.name || 'video');
+      window.location.href = `magnet:?xt=urn:btih:${source.infoHash}&dn=${name}`;
+    }
+  };
   $('#sa-install').onsubmit = async (event) => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('button'), input = $('#sa-url');
-    button.disabled = true; tell('Comprobando e instalando addon…');
+    button.disabled = true; $('#sa-manage-status').textContent = 'Comprobando e instalando addon…';
     try {
       const url = input.value.trim().replace(/^stremio:\/\//i, 'https://');
       const { addon } = await api(room, 'install', { url });
       input.value = '';
       await refresh();
-      tell(addon.manifest.catalogs.length
+      $('#sa-manage-status').textContent = addon.manifest.catalogs.length
         ? 'Addon instalado correctamente.'
-        : 'Addon instalado. Solo proporciona fuentes de reproducción; instala también un catálogo como Cinemeta para buscar películas y series.');
+        : 'Addon instalado. Solo proporciona fuentes de reproducción; instala también un catálogo como Cinemeta para buscar películas y series.';
     }
-    catch (error) { tell(error.message); }
+    catch (error) { $('#sa-manage-status').textContent = error.message; }
     finally { button.disabled = false; }
   };
   $('#sa-subtitles').onchange = (event) => { if (event.target.id === 'sa-subtitle') chooseSubtitle(event.target.value); };
+  $('#sa-episodes').addEventListener('change', (event) => {
+    if (event.target.id !== 'sa-season') return;
+    const index = state.seasons.findIndex((group) => String(group.season) === event.target.value);
+    if (index === -1) return;
+    state.seasonIndex = index;
+    state.episodeId = state.seasons[index].episodes[0].id;
+    renderEpisodes();
+    loadStreams(state.episodeId);
+  });
+  ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'seeking', 'seeked', 'play', 'pause', 'ended', 'emptied'].forEach((event) => {
+    video.addEventListener(event, updatePlaybackControls);
+  });
+  $('#sa-volume').oninput = (event) => { video.volume = Number(event.target.value); video.muted = false; };
+  timeline.addEventListener('input', () => {
+    scrubbing = true;
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    $('#sa-time').textContent = `${formatPlaybackTime(duration * Number(timeline.value) / 1000)} / ${duration ? formatPlaybackTime(duration) : '--:--'}`;
+    timeline.style.setProperty('--seek-fill', `${timeline.value / 10}%`);
+  });
+  timeline.addEventListener('change', () => {
+    const bounds = seekBounds();
+    if (bounds) {
+      const proposed = video.duration * Number(timeline.value) / 1000;
+      video.currentTime = Math.min(bounds.end, Math.max(bounds.start, proposed));
+    }
+    scrubbing = false;
+    updatePlaybackControls();
+  });
+  video.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      seekBy(event.key === 'ArrowLeft' ? -10 : 10);
+    } else if (event.key === ' ' || event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    }
+  });
+  return {
+    show: async () => {
+      overlay.hidden = false;
+      $('#sa-detail').hidden = true;
+      $('#sa-browse').hidden = false;
+      try { await refresh(); } catch (error) { tell(error.message); }
+    },
+    hide: () => {
+      overlay.hidden = true;
+      ++browseNonce; ++streamNonce; ++detailNonce;
+      state.current = null;
+      stopVideo();
+    },
+  };
+
 }

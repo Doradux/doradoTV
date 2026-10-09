@@ -30,6 +30,7 @@ function mountPlayer(session, account) {
   <div class="app-shell">
     <header class="app-header">
       <a href="#" class="brand">
+        <img class="brand-logo" src="/favicon.svg" width="45" height="48" alt="" />
         <div>
           <span class="brand-title">DORADOTV</span><span id="current-room-title" class="brand-caption">${escapeHtml(session.title)}</span>
         </div>
@@ -38,6 +39,10 @@ function mountPlayer(session, account) {
         <button id="logout" type="button" title="Cerrar sesión" aria-label="Cerrar sesión" class="rounded-xl border border-slate-700 p-2.5 text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(LogOut)}</button>
       </div>
     </header>
+    <nav class="media-tabs" aria-label="Secciones de contenido">
+      <button type="button" id="media-channels" class="media-tab" aria-pressed="true" aria-controls="watch-layout">${iconSvg(TvMinimal, 'h-4 w-4')}<span>Lista de canales</span></button>
+      <button type="button" id="media-cinema" class="media-tab" aria-pressed="false" aria-controls="sa-cinema-page">${iconSvg(Play, 'h-4 w-4')}<span>Cine y series</span></button>
+    </nav>
     <main id="watch-layout" class="watch-layout">
       <section class="player-column" aria-label="Reproductor">
         <div id="player-shell" class="player-shell">
@@ -66,8 +71,8 @@ function mountPlayer(session, account) {
         ${session.owner ? `<section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><button id="relay-toggle" type="button" class="relay-toggle" aria-controls="relay-details" aria-expanded="false">Mostrar conexiones</button></div><div id="relay-details" hidden><p id="relay-count" class="relay-summary channel-count"></p><div id="relay-connections" class="relay-connections"></div></div></section>` : ''}
       </section>
       <aside class="channel-panel" aria-label="Canales">
-        <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">LISTA DE CANALES</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
-          <label for="search" class="sr-only">Buscar canales</label><div class="search-field">${iconSvg(Search, 'h-4 w-4')}<input id="search" type="search" placeholder="Buscar canal o categoría…" /></div>
+        <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">TELEVISIÓN EN DIRECTO</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
+          <label for="search" class="sr-only">Buscar canales en directo</label><div class="search-field">${iconSvg(Search, 'h-4 w-4')}<input id="search" type="search" placeholder="Buscar canal en directo o categoría…" /></div>
           <div class="filter-row"><div class="category-field"><select id="category" hidden aria-hidden="true" tabindex="-1"><option value="">Todas las categorías</option></select><button id="category-trigger" type="button" class="select-trigger" role="combobox" aria-label="Filtrar categoría" aria-haspopup="listbox" aria-expanded="false" aria-controls="category-options"><span id="category-label">Todas las categorías</span>${morphSvg(ChevronDown, 'category-chevron', 'h-4 w-4')}</button><div id="category-options" class="select-menu" role="listbox" aria-label="Categorías" aria-hidden="true"></div></div><button id="favorites" type="button" class="favorites-filter" title="Mostrar favoritos" aria-label="Mostrar favoritos" aria-pressed="false">${iconSvg(Bookmark, 'h-4 w-4 favorite-icon')}<span>Favoritos</span></button></div>
         </div>
         <div id="channel-list" class="channel-list" role="list"><p class="list-empty">Los canales aparecerán aquí.</p></div><div id="more-wrap" class="hidden border-t border-slate-800 p-3"><button id="more" type="button" class="more-button">Mostrar más canales</button></div>
@@ -86,7 +91,17 @@ function mountPlayer(session, account) {
     <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Sube un archivo .m3u de hasta 10 MB. Se guardará cifrado para esta sala; la lista actual se conserva si la subida falla.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
   </div>`;
 
-  mountRoomAddons(app, session, { stopLive: () => stop() });
+  const cinema = mountRoomAddons(app, session, { stopLive: () => stop() });
+  const showSection = (mode) => {
+    const isCinema = mode === 'cinema';
+    app.querySelector('#watch-layout').hidden = isCinema;
+    app.querySelector('#media-channels').setAttribute('aria-pressed', String(!isCinema));
+    app.querySelector('#media-cinema').setAttribute('aria-pressed', String(isCinema));
+    if (isCinema) cinema.show();
+    else cinema.hide();
+  };
+  app.querySelector('#media-channels').addEventListener('click', () => showSection('channels'));
+  app.querySelector('#media-cinema').addEventListener('click', () => showSection('cinema'));
   const $ = (selector) => app.querySelector(selector);
   const categorySelect = createCustomSelect($('#category'), $('#category-trigger'), $('#category-options'), $('#category-label'), $('#category-chevron'));
   const video = $('#video');

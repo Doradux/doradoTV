@@ -65,6 +65,29 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
         return json({ ok: true });
       }
       const addons = (await read(store, stateKey(slug)))?.addons || [];
+      if (action === 'search') {
+        const type = input.type, query = typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '';
+        if (!['movie', 'series'].includes(type) || query.length < 2) throw new RoomError('Introduce al menos dos caracteres y un tipo válido.', 400);
+        const searchable = addons.flatMap((addon) => addon.manifest.catalogs
+          .filter((catalog) => catalog.type === type && catalog.search && !catalog.required && supports(addon.manifest, 'catalog', type))
+          .map((catalog) => ({ addon, catalog }))).slice(0, 16);
+        const results = await Promise.all(searchable.map(async ({ addon, catalog }) => {
+          try {
+            const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), 'catalog', type, catalog.id, { search: query }));
+            return { metas: (Array.isArray(data.metas) ? data.metas : []).slice(0, 60).map(metaPreview).filter(Boolean)
+              .map((meta) => ({ ...meta, addonId: addon.id })), warning: null };
+          } catch (error) {
+            return { metas: [], warning: { addon: addon.manifest.name, reason: error instanceof RoomError ? error.message : 'No se pudo conectar con el addon.' } };
+          }
+        }));
+        const distinct = new Map();
+        for (const { metas } of results) for (const meta of metas) {
+          const key = meta.type + ':' + meta.id;
+          if (!distinct.has(key) || (!distinct.get(key).poster && meta.poster)) distinct.set(key, meta);
+        }
+        return json({ metas: [...distinct.values()].slice(0, 100),
+          engines: searchable.length, warnings: results.flatMap(({ warning }) => warning ? [warning] : []) });
+      }
       if (action === 'catalog') {
         const addon = selectAddon(addons, itemIdentifier(input.addonId, 100));
         const type = input.type, id = itemIdentifier(input.catalogId);
@@ -103,12 +126,19 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
         const results = await Promise.all(candidates.map(async (addon) => {
           try {
             const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), resource, type, id));
-            if (action === 'streams') return (Array.isArray(data.streams) ? data.streams : []).slice(0, 30).map((s) => streamView(s, addon.manifest.name)).filter(Boolean);
-            return (Array.isArray(data.subtitles) ? data.subtitles : []).slice(0, 30).map(subtitleView).filter(Boolean);
-          } catch { return []; }
+            const items = action === 'streams'
+              ? (Array.isArray(data.streams) ? data.streams : []).slice(0, 30).map((s) => streamView(s, addon.manifest.name)).filter(Boolean)
+              : (Array.isArray(data.subtitles) ? data.subtitles : []).slice(0, 30).map(subtitleView).filter(Boolean);
+            return { items };
+          } catch (error) {
+            return { items: [], warning: { addon: addon.manifest.name, reason: error instanceof RoomError ? error.message : 'No se pudo conectar con el addon.' } };
+          }
         }));
-        if (action === 'streams') return json({ streams: results.flat().slice(0, 80) });
-        return json({ subtitles: results.flat().slice(0, 80) });
+        if (action === 'streams') return json({
+          streams: results.flatMap(({ items }) => items).slice(0, 80),
+          warnings: results.flatMap(({ warning }) => warning ? [warning] : []),
+        });
+        return json({ subtitles: results.flatMap(({ items }) => items).slice(0, 80) });
       }
       throw new RoomError('Ruta no encontrada.', 404);
     } catch (error) {

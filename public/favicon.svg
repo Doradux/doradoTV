@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="310 257 675 720" role="img" aria-label="DoradoTV">
+<defs><linearGradient id="gold" x1="0" y1="0" x2=".75" y2="1"><stop stop-color="#f7d25d"/><stop offset=".55" stop-color="#f1c34a"/><stop offset="1" stop-color="#daa633"/></linearGradient></defs>
+<path fill="url(#gold)" fill-rule="evenodd" d="M 394 329 L 381 343 L 376 353 L 373 365 L 373 876 L 375 885 L 385 901 L 394 908 L 408 913 L 671 912 L 723 902 L 754 891 L 786 875 L 824 848 L 849 824 L 869 799 L 882 779 L 897 750 L 907 724 L 915 695 L 922 644 L 922 602 L 920 580 L 915 549 L 908 522 L 896 489 L 884 464 L 866 435 L 853 418 L 817 381 L 777 353 L 733 333 L 688 322 L 659 319 L 420 319 Z M 488 439 L 494 436 L 632 436 L 674 443 L 699 452 L 732 471 L 748 484 L 774 513 L 791 542 L 804 581 L 808 606 L 808 639 L 806 656 L 798 688 L 784 719 L 765 746 L 743 768 L 730 778 L 696 797 L 676 804 L 648 810 L 483 812 L 481 810 L 481 450 Z"/>
+<path fill="url(#gold)" d="M 561 508 L 552 512 L 547 517 L 542 529 L 542 718 L 546 728 L 553 735 L 567 739 L 580 735 L 734 644 L 743 632 L 744 618 L 740 609 L 733 602 L 581 512 L 572 508 Z"/>
+</svg>

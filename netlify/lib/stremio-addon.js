@@ -153,9 +153,17 @@ export function metaPreview(item) {
 export function streamView(item, addonName) {
   if (!item || typeof item !== 'object') return null;
   const url = typeof item.url === 'string' && /^https?:\/\//i.test(item.url) && item.url.length < 2000 ? item.url : '';
-  return { name: clip(item.name, 120) || addonName, title: clip(item.title, 250),
-    url, supported: url.startsWith('https://') && !/\.torrent(?:$|\?)/i.test(url) && !item.infoHash,
-    kind: item.infoHash ? 'torrent' : item.ytId ? 'youtube' : url.startsWith('http:') ? 'http' : url ? 'https' : 'other',
+  const title = clip(item.title, 250);
+  const match = title.match(/(?:👤|👥|seeders?)\s*[:=]?\s*(\d[\d.,]*)/i);
+  const parsedSeeds = match ? Number(match[1].replace(/[.,]/g, '')) : null;
+  const seeders = Number.isSafeInteger(item.seeders) && item.seeders >= 0 ? item.seeders
+    : Number.isSafeInteger(parsedSeeds) && parsedSeeds >= 0 ? parsedSeeds : null;
+  const infoHash = typeof item.infoHash === 'string' && /^[a-f\d]{40}$/i.test(item.infoHash) ? item.infoHash.toLowerCase() : '';
+  const torrent = !!item.infoHash || /\.torrent(?:$|\?)/i.test(url);
+  return { name: clip(item.name, 120) || addonName, title, url: torrent ? '' : url,
+    supported: url.startsWith('https://') && !torrent,
+    kind: torrent ? 'torrent' : item.ytId ? 'youtube' : url.startsWith('http:') ? 'http' : url ? 'https' : 'other',
+    seeders, infoHash, fileIdx: Number.isSafeInteger(item.fileIdx) && item.fileIdx >= 0 ? item.fileIdx : null,
     subtitles: arr(item.subtitles, 25).map(subtitleView).filter(Boolean) };
 }
 

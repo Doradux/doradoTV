@@ -88,3 +88,11 @@ La integración consulta los recursos del [protocolo de Stremio](https://stremio
 **Seguridad:** los servidores de addons deben servir HTTPS en el puerto 443 y resolver a IPs públicas. El backend fija la IP al conectar, inspecciona de nuevo cada redirección y limita tiempos, tamaño de respuesta y peticiones por sesión. Se validan los manifests y se escapa su contenido al mostrarlo. Instala únicamente addons de confianza y que proporcionen contenido que tengas derecho a reproducir; DoradoTV no incluye contenidos ni un motor de torrents. Las URL de vídeo resultantes se entregan al navegador del miembro autorizado y pueden ser visibles en sus herramientas de desarrollador.
 
 Los addons son una función independiente de las listas M3U y no afectan a sus límites de conexión. La reproducción VOD detiene la emisión en directo que estuviera utilizando el mismo navegador. Esta primera versión no sincroniza la reproducción entre los miembros de una sala ni ofrece un proxy genérico de vídeo o subtítulos.
+
+### Cine y series en las salas
+
+La sala tiene un selector entre **Lista de canales** y **Cine y series**. El acceso a **Gestión de addons** solo aparece al propietario; además, las rutas del servidor comprueban sus permisos al instalar y eliminar complementos. Las búsquedas de películas y series se ejecutan sobre los catálogos que anuncian soporte de búsqueda de los addons instalados; los resultados se agrupan por identificador para evitar duplicados. Los addons exclusivamente de streams participan cuando se consultan las fuentes de un título, no como catálogos.
+
+En las series puede seleccionarse temporada y episodio si un addon de metadatos aporta la lista de episodios. Las fuentes se pueden ordenar por seeders cuando estos están disponibles y elegir individualmente. Las fuentes directas HTTPS compatibles pueden reproducirse en el navegador; los torrents no se reproducen desde Netlify y requieren abrir la fuente magnet en un cliente externo. El número de seeders representa la cantidad indicada por el proveedor, **no** un peer individual al que se pueda conectar desde el navegador.
+
+El favicon y los iconos instalables comparten el nuevo logotipo transparente `public/favicon.svg` (sin fondo), con variantes PNG también transparentes.

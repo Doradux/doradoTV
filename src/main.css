@@ -278,3 +278,5 @@ button:disabled { cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.brand-logo { display:block; flex:0 0 auto; width:45px; height:48px; object-fit:contain; }
