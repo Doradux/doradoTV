@@ -373,7 +373,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       return;
     }
     if (request.method === 'GET' && url.pathname === '/health') {
-      json(response, 200, { ok: true, torrent: { supported: true, maxFileBytes: torrentMaxBytes } }); return;
+      json(response, 200, { ok: true, torrent: { supported: true, maxFileBytes: torrentMaxBytes, nativeInstalled: existsSync(new URL('../node_modules/node-datachannel/build/Release/node_datachannel.node', import.meta.url)) } }); return;
     }
     if (!sameSecret(request.headers.authorization?.replace(/^Bearer /, ''), secret)) { json(response, 401, { error: 'No autorizado.' }); return; }
     try {
