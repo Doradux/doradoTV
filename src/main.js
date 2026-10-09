@@ -17,6 +17,7 @@ import { roomApi, navigateRoom } from './room-api.js';
 import { setupRemotePlayback } from './remote-playback.js';
 import { mountRoomAddons } from './stremio-ui.js';
 import { formatPlaybackTime, seekTarget } from './vod-utils.js';
+import { setupFullscreenControls } from './fullscreen-controls.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
 const app = document.querySelector('#app');
@@ -52,25 +53,27 @@ function mountPlayer(session, account) {
             </div>
             <div id="loading" class="absolute inset-0 z-10 hidden items-center justify-center bg-black/60" role="status"><span class="loading-label"><span class="loading-dot"></span>Conectando con la emisión…</span></div>
           </div>
-          <div class="player-controls">
-            <button id="play" type="button" title="Reproducir" aria-label="Reproducir" class="icon-button play-button">${morphSvg(Play, 'play-icon')}</button>
-            <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen" /><output id="volume-value" for="volume" class="volume-value" aria-hidden="true">80%</output></div>
-            <span id="playback-badge" class="playback-badge">EN DIRECTO</span>
-            <div class="view-controls">
-              <button id="cast" type="button" title="Transmitir a TV" aria-label="Transmitir a TV" aria-pressed="false" class="icon-button" disabled>${iconSvg(Cast, 'h-5 w-5')}</button>
-              <button id="pip" type="button" title="Ventana flotante" aria-label="Ventana flotante" aria-pressed="false" class="icon-button">${morphSvg(PictureInPicture2, 'pip-icon')}</button>
-              <button id="theater" type="button" title="Modo cine" aria-label="Modo cine" aria-pressed="false" aria-controls="watch-layout" class="icon-button">${morphSvg(RectangleHorizontal, 'theater-icon')}</button>
-              <button id="fullscreen" type="button" title="Pantalla completa" aria-label="Pantalla completa" aria-pressed="false" class="icon-button">${morphSvg(Maximize, 'fullscreen-icon')}</button>
-            </div>
-          </div>
-          <div id="vod-tools" class="vod-tools" hidden>
-            <input id="vod-seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición de reproducción">
-            <div class="vod-transport">
-              <button id="vod-prev" type="button" disabled aria-label="Episodio anterior" title="Episodio anterior">${iconSvg(SkipBack, 'h-5 w-5')}</button>
-              <button id="vod-back" type="button" disabled aria-label="Retroceder 10 segundos" title="Retroceder 10 segundos">${iconSvg(RotateCcw, 'h-5 w-5')}<small>10</small></button>
+          <div class="player-controls" role="group" aria-label="Controles de reproducción">
+            <div id="vod-tools" class="vod-tools" hidden>
+              <input id="vod-seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición de reproducción">
               <output id="vod-clock" for="vod-seek">00:00 / --:--</output>
-              <button id="vod-forward" type="button" disabled aria-label="Avanzar 10 segundos" title="Avanzar 10 segundos">${iconSvg(RotateCw, 'h-5 w-5')}<small>10</small></button>
-              <button id="vod-next" type="button" disabled aria-label="Siguiente episodio" title="Siguiente episodio">${iconSvg(SkipForward, 'h-5 w-5')}</button>
+            </div>
+            <div class="player-actions">
+              <button id="play" type="button" title="Reproducir" aria-label="Reproducir" class="icon-button play-button">${morphSvg(Play, 'play-icon')}</button>
+              <div id="vod-transport" class="vod-transport" hidden>
+                <button id="vod-prev" type="button" disabled aria-label="Episodio anterior" title="Episodio anterior">${iconSvg(SkipBack, 'h-5 w-5')}</button>
+                <button id="vod-back" type="button" disabled aria-label="Retroceder 10 segundos" title="Retroceder 10 segundos">${iconSvg(RotateCcw, 'h-5 w-5')}<small>10</small></button>
+                <button id="vod-forward" type="button" disabled aria-label="Avanzar 10 segundos" title="Avanzar 10 segundos">${iconSvg(RotateCw, 'h-5 w-5')}<small>10</small></button>
+                <button id="vod-next" type="button" disabled aria-label="Siguiente episodio" title="Siguiente episodio">${iconSvg(SkipForward, 'h-5 w-5')}</button>
+              </div>
+              <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen" /><output id="volume-value" for="volume" class="volume-value" aria-hidden="true">80%</output></div>
+              <span id="playback-badge" class="playback-badge">EN DIRECTO</span>
+              <div class="view-controls">
+                <button id="cast" type="button" title="Transmitir a TV" aria-label="Transmitir a TV" aria-pressed="false" class="icon-button" disabled>${iconSvg(Cast, 'h-5 w-5')}</button>
+                <button id="pip" type="button" title="Ventana flotante" aria-label="Ventana flotante" aria-pressed="false" class="icon-button">${morphSvg(PictureInPicture2, 'pip-icon')}</button>
+                <button id="theater" type="button" title="Modo cine" aria-label="Modo cine" aria-pressed="false" aria-controls="watch-layout" class="icon-button">${morphSvg(RectangleHorizontal, 'theater-icon')}</button>
+                <button id="fullscreen" type="button" title="Pantalla completa" aria-label="Pantalla completa" aria-pressed="false" class="icon-button">${morphSvg(Maximize, 'fullscreen-icon')}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -116,6 +119,7 @@ function mountPlayer(session, account) {
   const $ = (selector) => app.querySelector(selector);
   const categorySelect = createCustomSelect($('#category'), $('#category-trigger'), $('#category-options'), $('#category-label'), $('#category-chevron'));
   const video = $('#video');
+  const fullscreenControls = setupFullscreenControls($('#player-shell'));
   const ambient = createAmbientLight(video, $('#ambient'), $('#video-stage'));
   const theaterMorph = createMorph($('#theater-icon'), RectangleHorizontal, { reducedMotion: 'user' });
   const volumeMorph = createMorph($('#volume-icon'), Volume2, { reducedMotion: 'user' });
@@ -281,6 +285,8 @@ function mountPlayer(session, account) {
     vodNavigation = {};
     for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
     $('#vod-tools').hidden = true;
+    $('#vod-transport').hidden = true;
+    $('.player-controls').classList.remove('is-vod');
     $('#playback-badge').textContent = 'EN DIRECTO';
     setConnecting(false);
     $('#retry-video').hidden = true;
@@ -425,6 +431,8 @@ function mountPlayer(session, account) {
     vodSession = { source, title, navigation };
     setVodNavigation(navigation);
     $('#vod-tools').hidden = false;
+    $('#vod-transport').hidden = false;
+    $('.player-controls').classList.add('is-vod');
     $('#playback-badge').textContent = 'CINE Y SERIES';
     $('#now-name').textContent = title;
     $('#empty').classList.add('hidden');
@@ -875,7 +883,7 @@ function mountPlayer(session, account) {
     stop();
     playbackError('El navegador no pudo abrir la emisión.');
   });
-  window.addEventListener('pagehide', () => { pageUnloading = true; stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
+  window.addEventListener('pagehide', () => { pageUnloading = true; fullscreenControls.dispose(); stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
   async function heartbeat() {
     if (heartbeatPending) return;
     heartbeatPending = true;
