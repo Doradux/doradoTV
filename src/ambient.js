@@ -1,10 +1,13 @@
-// A small, blurred copy of the current frame fills the unused player space.
-// No pixel readback is needed, so direct cross-origin video remains playable.
+// A blurred copy of the decoded frame surrounds the player. Match the video's
+// presentation cadence instead of updating at a fixed 12 FPS (visible judder).
+// Drawing never reads pixels back, so cross-origin sources remain supported.
 export function createAmbientLight(video, canvas, stage) {
-  const context = canvas.getContext('2d', { alpha: false });
+  const context = canvas.getContext('2d', { alpha: false, desynchronized: true });
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const videoFrames = typeof video.requestVideoFrameCallback === 'function'
+    && typeof video.cancelVideoFrameCallback === 'function';
   let frame = null;
-  let lastPaint = 0;
+  let lastMediaTime = -1;
   let failed = false;
 
   function fitVideo() {
@@ -27,41 +30,49 @@ export function createAmbientLight(video, canvas, stage) {
 
   function cancel() {
     if (frame === null) return;
-    if (video.requestVideoFrameCallback) video.cancelVideoFrameCallback(frame);
+    if (videoFrames) video.cancelVideoFrameCallback(frame);
     else cancelAnimationFrame(frame);
     frame = null;
   }
 
-  function tick(time) {
+  function tick(_time, metadata) {
     frame = null;
     if (document.hidden || video.paused || video.ended || failed || reducedMotion.matches) return;
-    // Cap drawing at 12 fps; the 96 × 54 buffer keeps the effect inexpensive.
-    if (time - lastPaint >= 1000 / 12) { paint(); lastPaint = time; }
+    // requestVideoFrameCallback fires for decoded/presented frames (24/30/60 FPS).
+    // RAF is a fallback; avoid duplicate copies of an unchanged frame there.
+    const mediaTime = metadata?.mediaTime ?? video.currentTime;
+    if (videoFrames || mediaTime !== lastMediaTime) {
+      paint();
+      lastMediaTime = mediaTime;
+    }
     if (!failed) schedule();
   }
 
   function schedule() {
-    frame = video.requestVideoFrameCallback ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
+    if (frame !== null || failed) return;
+    frame = videoFrames ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
   }
 
   function resume() {
     cancel();
     if (document.hidden) return;
     paint();
+    lastMediaTime = video.currentTime;
     if (!video.paused && !video.ended && !failed && !reducedMotion.matches) schedule();
   }
 
   function reset() {
     cancel();
     failed = false;
-    lastPaint = 0;
+    lastMediaTime = -1;
     canvas.classList.remove('is-visible');
     context?.clearRect(0, 0, canvas.width, canvas.height);
   }
 
   const observer = new ResizeObserver(fitVideo);
   observer.observe(stage);
-  const events = { loadedmetadata: fitVideo, resize: fitVideo, loadeddata: resume, playing: resume, seeked: resume, pause: cancel, ended: cancel, emptied: reset, error: reset };
+  const events = { loadedmetadata: fitVideo, resize: fitVideo, loadeddata: resume,
+    playing: resume, seeked: resume, pause: resume, ended: cancel, emptied: reset, error: reset };
   Object.entries(events).forEach(([event, listener]) => video.addEventListener(event, listener));
   document.addEventListener('visibilitychange', resume);
   reducedMotion.addEventListener('change', resume);
