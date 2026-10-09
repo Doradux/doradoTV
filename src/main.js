@@ -40,10 +40,6 @@ function mountPlayer(session, account) {
         <button id="logout" type="button" title="Cerrar sesión" aria-label="Cerrar sesión" class="rounded-xl border border-slate-700 p-2.5 text-slate-300 transition hover:border-amber-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400">${iconSvg(LogOut)}</button>
       </div>
     </header>
-    <nav class="media-tabs" aria-label="Secciones de contenido">
-      <button type="button" id="media-channels" class="media-tab" aria-pressed="true" aria-controls="watch-layout">${iconSvg(TvMinimal, 'h-4 w-4')}<span>Lista de canales</span></button>
-      <button type="button" id="media-cinema" class="media-tab" aria-pressed="false" aria-controls="sa-cinema-page">${iconSvg(Play, 'h-4 w-4')}<span>Cine y series</span></button>
-    </nav>
     <main id="watch-layout" class="watch-layout">
       <section class="player-column" aria-label="Reproductor">
         <div id="player-shell" class="player-shell">
@@ -81,7 +77,11 @@ function mountPlayer(session, account) {
         <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p><div id="relay-health" class="relay-health" role="status" aria-live="polite" hidden><span id="relay-health-text"></span><button type="button" id="relay-health-retry" hidden>Comprobar de nuevo</button></div><button id="retry-video" type="button" class="retry-video" hidden aria-label="Reintentar conexión del canal">${iconSvg(RefreshCw, 'h-4 w-4')} Reintentar conexión</button></div></div>
         ${session.owner ? `<section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><button id="relay-toggle" type="button" class="relay-toggle" aria-controls="relay-details" aria-expanded="false">Mostrar conexiones</button></div><div id="relay-details" hidden><p id="relay-count" class="relay-summary channel-count"></p><div id="relay-connections" class="relay-connections"></div></div></section>` : ''}
       </section>
-      <aside class="channel-panel" aria-label="Canales">
+      <aside class="channel-panel" aria-label="Contenido de la sala">
+    <nav class="media-tabs" aria-label="Secciones de contenido">
+      <button type="button" id="media-channels" class="media-tab" aria-pressed="true" aria-controls="channel-list">${iconSvg(TvMinimal, 'h-4 w-4')}<span>Lista de canales</span></button>
+      <button type="button" id="media-cinema" class="media-tab" aria-pressed="false" aria-controls="sa-cinema-page">${iconSvg(Play, 'h-4 w-4')}<span>Cine y series</span></button>
+    </nav>
         <div class="channel-filters"><div class="channel-heading"><div><p class="eyebrow">TELEVISIÓN EN DIRECTO</p><h2>Canales</h2></div><span id="count" class="channel-count">0 canales</span></div>
           <label for="search" class="sr-only">Buscar canales en directo</label><div class="search-field">${iconSvg(Search, 'h-4 w-4')}<input id="search" type="search" placeholder="Buscar canal en directo o categoría…" /></div>
           <div class="filter-row"><div class="category-field"><select id="category" hidden aria-hidden="true" tabindex="-1"><option value="">Todas las categorías</option></select><button id="category-trigger" type="button" class="select-trigger" role="combobox" aria-label="Filtrar categoría" aria-haspopup="listbox" aria-expanded="false" aria-controls="category-options"><span id="category-label">Todas las categorías</span>${morphSvg(ChevronDown, 'category-chevron', 'h-4 w-4')}</button><div id="category-options" class="select-menu" role="listbox" aria-label="Categorías" aria-hidden="true"></div></div><button id="favorites" type="button" class="favorites-filter" title="Mostrar favoritos" aria-label="Mostrar favoritos" aria-pressed="false">${iconSvg(Bookmark, 'h-4 w-4 favorite-icon')}<span>Favoritos</span></button></div>

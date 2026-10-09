@@ -16,9 +16,16 @@ test('search queries all searchable catalogs, merges duplicate IDs, and allows r
   const calls = [];
   const handler = createAddonsHandler({ getStore: () => store, env, clock: () => clock, fetchJson: async (url) => {
     calls.push(url);
+    if (url.includes('series.test') && url.endsWith('/manifest.json')) return {
+      id: url, name: 'Series', version: '1', resources: ['catalog'], types: ['series'],
+      catalogs: [{ id: 'search', type: 'series', extra: [{ name: 'search' }] }],
+    };
     if (url.endsWith('/manifest.json')) return { id: url, name: url.includes('one.test') ? 'A' : 'B', version: '1', resources: ['catalog'], types: ['movie'], catalogs: [
       { id: 'search', type: 'movie', extra: [{ name: 'search' }] }, { id: 'popular', type: 'movie', extra: [] },
     ] };
+    if (url.includes('/catalog/series/')) return {
+      metas: [{ type: 'series', id: 'tt3', name: 'Serie de ejemplo' }],
+    };
     if (url.includes('two.test')) return { metas: [{ type: 'movie', id: 'tt1', name: 'Duplicada', poster: 'https://img.test/poster.jpg' }, { type: 'movie', id: 'tt2', name: 'Otra' }] };
     return { metas: [{ type: 'movie', id: 'tt1', name: 'Primera' }] };
   }});
@@ -41,6 +48,17 @@ test('search queries all searchable catalogs, merges duplicate IDs, and allows r
   assert.equal(calls.filter((url) => url.includes('/catalog/')).length, 2);
   assert(calls.every((url) => !url.includes('popular')));
   assert.equal((await send('search', guestToken, { type: 'movie', search: 'a' })).status, 400);
+
+  // Single search spans both films and series without losing results from older addons.
+  assert.equal((await send('install', ownerToken, { url: 'https://series.test/manifest.json' })).status, 201);
+  const combined = await send('search', guestToken, { type: 'all', search: 'Star Wars' });
+  assert.equal(combined.status, 200);
+  assert.equal(combined.data.engines, 3);
+  assert.equal(combined.data.metas.length, 3);
+  assert.deepEqual(new Set(combined.data.metas.map((meta) => meta.type)), new Set(['movie', 'series']));
+  assert(combined.data.metas.every((meta) => meta.addonId));
+  assert(calls.some((url) => url.includes('/catalog/series/search/search=Star%20Wars.json')));
+  assert.equal((await send('search', guestToken, { search: 'Star Wars' })).data.metas.length, 3);
 });
 
 test('source cards retain seed counts and validate magnet hash', () => {

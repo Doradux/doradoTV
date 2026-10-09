@@ -66,14 +66,17 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
       }
       const addons = (await read(store, stateKey(slug)))?.addons || [];
       if (action === 'search') {
-        const type = input.type, query = typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '';
-        if (!['movie', 'series'].includes(type) || query.length < 2) throw new RoomError('Introduce al menos dos caracteres y un tipo válido.', 400);
+        const type = input.type ?? 'all', query = typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '';
+        if (!['all', 'movie', 'series'].includes(type) || query.length < 2) throw new RoomError('Introduce al menos dos caracteres.', 400);
+        // Include all installed searchable addons for both types; bound work per addon.
         const searchable = addons.flatMap((addon) => addon.manifest.catalogs
-          .filter((catalog) => catalog.type === type && catalog.search && !catalog.required && supports(addon.manifest, 'catalog', type))
-          .map((catalog) => ({ addon, catalog }))).slice(0, 16);
+          .filter((catalog) => (type === 'all' || catalog.type === type) &&
+            catalog.search && !catalog.required && supports(addon.manifest, 'catalog', catalog.type))
+          .slice(0, 8)
+          .map((catalog) => ({ addon, catalog })));
         const results = await Promise.all(searchable.map(async ({ addon, catalog }) => {
           try {
-            const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), 'catalog', type, catalog.id, { search: query }));
+            const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), 'catalog', catalog.type, catalog.id, { search: query }));
             return { metas: (Array.isArray(data.metas) ? data.metas : []).slice(0, 60).map(metaPreview).filter(Boolean)
               .map((meta) => ({ ...meta, addonId: addon.id })), warning: null };
           } catch (error) {

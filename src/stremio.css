@@ -76,3 +76,60 @@
 @media(max-width:750px){.sa-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:13px 10px}.sa-feature{flex-direction:row;align-items:flex-start}.sa-feature img,.sa-feature .sa-no-poster{width:90px}.sa-browser-stage{padding:16px}}
 @media(max-width:420px){.sa-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(prefers-reduced-motion:reduce){#sa-cinema-page,.sa-browser-stage,.sa-card,.sa-source{animation:none!important;transition:none!important}}
+
+/* In-panel media switch: the labels never wrap; whole buttons stack when needed. */
+.media-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  padding: 15px 16px;
+  margin: 0;
+  border-bottom: 1px solid #ffffff1b;
+  background: linear-gradient(125deg, #151c28, #10151e);
+  border-radius: 18px 18px 0 0;
+}
+.media-tab {
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: max-content;
+  min-height: 44px;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid #ffffff26;
+  border-radius: 11px;
+  background: #090f19;
+  color: #c1c7d1;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -.08px;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  transition: color .22s, border-color .22s, background .25s, box-shadow .3s, transform .25s;
+}
+.media-tab > span { display: inline-block; white-space: nowrap; flex-shrink: 0; }
+.media-tab > svg { flex-shrink: 0; width: 16px; height: 16px; }
+.media-tab[aria-pressed="true"] {
+  color: #211608;
+  border-color: #f4d18c;
+  background: linear-gradient(115deg, #edbc60, #f8d995);
+  box-shadow: 0 4px 17px #ebbb5c32, inset 0 1px 0 #fff6;
+}
+.media-tab[aria-pressed="false"]:hover {
+  color: #f2ce86;
+  border-color: #e4be735c;
+  background: #292b32;
+}
+.media-tab[aria-pressed="true"]:hover { box-shadow: 0 5px 20px #e7bd5c4d, inset 0 1px 0 #fff7; }
+.media-tab:focus-visible { outline: 2px solid #f7d58c; outline-offset: 3px; }
+@media (max-width: 480px) {
+  .media-tabs { padding: 12px; gap: 7px; }
+  .media-tab { padding: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .media-tab { transition: none; }
+}

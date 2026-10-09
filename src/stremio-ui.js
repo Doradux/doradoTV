@@ -23,15 +23,9 @@ export function mountRoomAddons(app, session, { player }) {
   const cinema = document.createElement('section');
   cinema.id = 'sa-cinema-page'; cinema.className = 'sa-cinema-page'; cinema.hidden = true;
   cinema.innerHTML = `<div class="sa-cinema-head">
-    <div class="sa-cinema-heading">${iconSvg(Film, 'h-5 w-5')}<h2>Cine y series</h2></div>
-    <div class="sa-content-switch" role="group" aria-label="Tipo de contenido">
-      <button type="button" data-kind="movie" aria-pressed="true">Películas</button>
-      <button type="button" data-kind="series" aria-pressed="false">Series</button>
-    </div>
     <form id="sa-search" role="search" class="sa-search">
       <label class="sr-only" for="sa-search-input">Buscar títulos</label>
-      ${iconSvg(Search, 'h-4 w-4')}
-      <input id="sa-search-input" type="search" placeholder="Buscar películas…" minlength="2" maxlength="100" autocomplete="off">
+      <input id="sa-search-input" type="search" placeholder="Buscar películas y series…" minlength="2" maxlength="100" autocomplete="off">
       <button type="submit" title="Buscar" aria-label="Buscar">${iconSvg(Search, 'h-4 w-4')}</button>
     </form></div>
     <div id="sa-browse" class="sa-browser-stage">
@@ -58,7 +52,7 @@ export function mountRoomAddons(app, session, { player }) {
       </form></div><p id="sa-manage-status" class="sa-message" role="status"></p></section>`;
   app.append(manage);
   const $ = (sel) => cinema.querySelector(sel) || manage.querySelector(sel);
-  const state = { addons: [], owner: false, type: 'movie', query: '', metas: [], current: null,
+  const state = { addons: [], owner: false, query: '', metas: [], current: null,
     seasons: [], episodeId: '', streams: [], searchToken: 0, detailToken: 0, streamToken: 0, loaded: false };
   const visible = () => !cinema.hidden;
   const say = (message, detail = false) => { $(detail ? '#sa-stream-status' : '#sa-message').textContent = message; };
@@ -86,7 +80,7 @@ export function mountRoomAddons(app, session, { player }) {
     say('Buscando…');
     $('#sa-grid').classList.add('is-loading');
     try {
-      const data = await api(room, 'search', { type: state.type, search: query });
+      const data = await api(room, 'search', { type: 'all', search: query });
       if (token !== state.searchToken || !visible()) return;
       state.metas = data.metas;
       $('#sa-grid').innerHTML = cards(state.metas) || '<p class="sa-muted">No hay resultados.</p>';
@@ -188,14 +182,6 @@ export function mountRoomAddons(app, session, { player }) {
   function hide() { cinema.hidden = true; ++state.searchToken; ++state.detailToken; ++state.streamToken; }
   $('#sa-search').onsubmit = (event) => { event.preventDefault(); state.query = $('#sa-search-input').value; browse(); };
   cinema.addEventListener('click', async (event) => {
-    const kind = event.target.closest('[data-kind]');
-    if (kind && kind.dataset.kind !== state.type) {
-      state.type = kind.dataset.kind; state.query = ''; state.metas = [];
-      $('#sa-search-input').value = '';
-      $('#sa-search-input').placeholder = state.type === 'movie' ? 'Buscar películas…' : 'Buscar series…';
-      cinema.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b === kind)));
-      swap(false); browse(); return;
-    }
     if (event.target.closest('[data-act="back"]')) { ++state.detailToken; ++state.streamToken; swap(false); return; }
     const film = event.target.closest('[data-film]');
     if (film) return detail(Number(film.dataset.film));
