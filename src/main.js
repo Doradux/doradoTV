@@ -6,7 +6,7 @@ import {
   RectangleHorizontal, PanelRightClose, ChevronDown, Radio,
   Maximize, Minimize, Bookmark, TvMinimal, Upload, Check, Cast,
   LogOut, LockKeyhole, X, FileUp, Search,
-  Settings2, DoorOpen,
+  Settings2, DoorOpen, RefreshCw,
 } from 'lucide';
 import { groupsFor, parsePlaylist } from './playlist.js';
 import { createAmbientLight } from './ambient.js';
@@ -67,7 +67,7 @@ function mountPlayer(session, account) {
             </div>
           </div>
         </div>
-        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p></div></div>
+        <div class="now-playing"><div class="now-symbol">${iconSvg(Radio, 'h-5 w-5')}</div><div class="min-w-0"><p class="eyebrow">REPRODUCCIÓN</p><h2 id="now-name">Ningún canal seleccionado</h2><p id="status" role="status" aria-live="polite"></p><button id="retry-video" type="button" class="retry-video" hidden aria-label="Reintentar conexión del canal">${iconSvg(RefreshCw, 'h-4 w-4')} Reintentar conexión</button></div></div>
         ${session.owner ? `<section id="relay-panel" class="relay-panel" aria-label="Conexiones de la sala"><div class="relay-heading"><div><p class="eyebrow">EMISIONES ACTIVAS</p><h2>Conexiones de la sala</h2></div><button id="relay-toggle" type="button" class="relay-toggle" aria-controls="relay-details" aria-expanded="false">Mostrar conexiones</button></div><div id="relay-details" hidden><p id="relay-count" class="relay-summary channel-count"></p><div id="relay-connections" class="relay-connections"></div></div></section>` : ''}
       </section>
       <aside class="channel-panel" aria-label="Canales">
@@ -131,6 +131,7 @@ function mountPlayer(session, account) {
   let connectionsExpanded = false;
   let connectionsGeneration = 0;
   let retryTimer = null;
+  let connecting = false;
   const tabKey = `dorado-tv:tab:${session.slug}`;
   const playbackKey = `dorado-tv:playback:${session.slug}`;
   const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
@@ -163,7 +164,25 @@ function mountPlayer(session, account) {
     $('#loading').classList.toggle('hidden', !loading);
     $('#loading').classList.toggle('flex', loading);
   }
+  function setConnecting(value) {
+    connecting = value;
+    const button = $('#play');
+    button.disabled = value;
+    button.classList.toggle('is-connecting', value);
+    button.setAttribute('aria-busy', String(value));
+    if (value) {
+      button.title = 'Conectando con la emisión…';
+      button.setAttribute('aria-label', 'Conectando con la emisión, espera…');
+    } else setPlayIcon(!video.paused);
+  }
+  function playbackError(message) {
+    setConnecting(false);
+    setLoading(false);
+    setStatus(message, true);
+    $('#retry-video').hidden = !active;
+  }
   function setPlayIcon(isPlaying) {
+    if (connecting) return;
     playMorph.morphTo(isPlaying ? Pause : Play, 'snappy');
     $('#playback-badge').classList.toggle('is-playing', isPlaying);
     $('#play').setAttribute('aria-label', isPlaying ? 'Pausar' : 'Reproducir');
@@ -190,6 +209,8 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    setConnecting(false);
+    $('#retry-video').hidden = true;
     playbackSource = '';
     remotePlayback.refresh();
     clearTimeout(retryTimer);
@@ -314,6 +335,7 @@ function mountPlayer(session, account) {
     document.title = `${channel.name} · Dorado TV`;
     $('#empty').classList.add('hidden');
     renderChannels();
+    setConnecting(true);
     setLoading(true);
     setStatus(`Conectando con ${channel.name}…`);
     try {
@@ -372,7 +394,7 @@ function mountPlayer(session, account) {
             }
             clearRememberedPlayback();
             stop();
-            setStatus('No se pudo reproducir el canal. Comprueba la señal.', true);
+            playbackError('No se pudo reproducir el canal. Comprueba la señal.');
           });
         }
       } else if (path.endsWith('.ts')) {
@@ -391,14 +413,18 @@ function mountPlayer(session, account) {
         await video.play();
       }
       if (token !== playbackToken) return;
+      setConnecting(false);
       setLoading(false);
       setStatus(`Reproduciendo ${channel.name}.`);
     } catch (error) {
       if (token !== playbackToken) return;
       if (playbackLease) stop();
-      setLoading(false);
+      setConnecting(false);
       if (error.full) retryTimer = setTimeout(() => { if (active === channel && !document.hidden) play(channel); }, 30000);
-      setStatus(error?.name === 'NotAllowedError' ? 'Pulsa Reproducir para iniciar el canal.' : error.message || 'No se pudo reproducir este canal. Comprueba la señal.', error?.name !== 'NotAllowedError');
+      if (error?.name === 'NotAllowedError') {
+        setLoading(false);
+        setStatus('Pulsa Reproducir para iniciar el canal.');
+      } else playbackError(error.message || 'No se pudo reproducir este canal. Comprueba la señal.');
     }
   }
 
@@ -424,13 +450,17 @@ function mountPlayer(session, account) {
       favoriteButton.title = favorite ? 'Quitar de favoritos' : 'Añadir a favoritos';
       favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${channel.name}`);
       if (onlyFavorites) setTimeout(renderChannels, 250);
-    } else play(channel);
+    } else {
+      play(channel);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   });
   $('#search').addEventListener('input', () => { visible = 80; renderChannels(); });
   $('#category').addEventListener('change', () => { visible = 80; renderChannels(); });
   $('#favorites').addEventListener('click', () => { onlyFavorites = !onlyFavorites; $('#favorites').setAttribute('aria-pressed', String(onlyFavorites)); visible = 80; renderChannels(); });
   $('#more').addEventListener('click', () => { visible += 80; renderChannels(); });
-  $('#play').addEventListener('click', () => { if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
+  $('#retry-video').addEventListener('click', () => { if (active && !connecting) play(active); });
+  $('#play').addEventListener('click', () => { if (connecting) return; if (!active) { setStatus('Selecciona un canal.'); return; } if (!video.paused || retryTimer) { clearRememberedPlayback(); stop(); setStatus('Emisión pausada.'); } else play(active); });
   if (session.owner) $('#relay-toggle').addEventListener('click', () => {
     connectionsExpanded = !connectionsExpanded;
     connectionsGeneration += 1;
@@ -598,13 +628,13 @@ function mountPlayer(session, account) {
   video.addEventListener('play', () => setPlayIcon(true));
   video.addEventListener('pause', () => setPlayIcon(false));
   video.addEventListener('waiting', () => setLoading(true));
-  video.addEventListener('playing', () => setLoading(false));
+  video.addEventListener('playing', () => { setConnecting(false); setLoading(false); });
   video.addEventListener('error', () => {
     if (!active || pageUnloading) return;
     if (hls) return;
     clearRememberedPlayback();
     stop();
-    setStatus('El navegador no pudo abrir la emisión.', true);
+    playbackError('El navegador no pudo abrir la emisión.');
   });
   window.addEventListener('pagehide', () => { pageUnloading = true; stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
   async function heartbeat() {

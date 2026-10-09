@@ -280,3 +280,15 @@ button:disabled { cursor: not-allowed; }
 }
 
 .brand-logo { display:block; flex:0 0 auto; width:45px; height:48px; object-fit:contain; }
+
+#play.is-connecting { position: relative; cursor: wait; opacity: .85; }
+#play.is-connecting svg { opacity: 0; }
+#play.is-connecting::after { content: ''; position: absolute; width: 21px; height: 21px; border: 2.5px solid #19140c40; border-top-color: #19140c; border-radius: 50%; animation: dorado-spin .8s linear infinite; }
+@keyframes dorado-spin { to { transform: rotate(360deg); } }
+.retry-video { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; padding: 9px 14px; border: 1px solid #dba74d55; border-radius: 10px; background: #dfaf4014; color: #f5cf86; font-size: 12px; font-weight: 600; cursor: pointer; }
+.retry-video:hover { border-color: #e5b555; background: #efc76b22; }
+.retry-video[hidden] { display: none !important; }
+
+.global-legal { padding: 17px 22px 26px; text-align: center; background: #090b10; }
+.global-legal a { color: #9399a7; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.global-legal a:hover { color: #f1c675; }

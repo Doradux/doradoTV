@@ -1,18 +1,18 @@
 import { roomStore, read, RoomError } from '../lib/room-store.js';
-import { RoomsService, accountView, roomView, normalizeRoom, normalizeEmail } from '../lib/rooms-service.js';
+import { RoomsService, accountView, roomView, normalizeRoom, normalizeEmail, validEmail, validRoom } from '../lib/rooms-service.js';
 import { ACCOUNT_COOKIE, GUEST_COOKIE, masterKey, cookieValue, cookie, digest, identity, rateLimit, requireOrigin, boundedJson, checkCaptcha } from '../lib/room-security.js';
-import { mailReady, sendAccountMail } from '../lib/room-mail.js';
+import { mailReady, sendAccountMail, reportReady, sendContentNotice } from '../lib/room-mail.js';
 import { googleClientId, beginGoogleSignIn, consumeGoogleSignIn, verifyGoogleAccessToken, GOOGLE_COOKIE, verifyGoogleCredential } from '../lib/room-google.js';
 
 const json = (value, status = 200, headers = {}) => Response.json(value, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', ...headers } });
-export function createRoomsHandler({ getStore = roomStore, env = process.env, sendMail = (email, token, kind) => sendAccountMail(email, token, kind, env), captcha = checkCaptcha, googleVerify = verifyGoogleCredential, detect, clock } = {}) {
+export function createRoomsHandler({ getStore = roomStore, env = process.env, sendMail = (email, token, kind) => sendAccountMail(email, token, kind, env), captcha = checkCaptcha, googleVerify = verifyGoogleCredential, detect, clock, sendNotice = sendContentNotice } = {}) {
   return async (request, context = {}) => {
     try {
       const url = new URL(request.url), action = url.searchParams.get('action');
       if (request.method === 'GET' && action === 'config') {
         let ready = true; try { masterKey(env); } catch { ready = false; }
         return json({ ready, registration: ready && mailReady(env) && !!env.TURNSTILE_SITE_KEY && !!env.TURNSTILE_SECRET_KEY,
-          googleClientId: ready ? googleClientId(env) : null,
+          googleClientId: ready ? googleClientId(env) : null, noticeReporting: ready && reportReady(env),
           siteKey: env.TURNSTILE_SITE_KEY || null, maxFileBytes: 10 * 1024 * 1024 });
       }
       masterKey(env);
@@ -22,7 +22,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       if (request.method === 'GET') {
         const slug = normalizeRoom(url.searchParams.get('room'));
         if (action === 'session') return json({ account: accountView(who.account), guestRoom: who.guest?.roomId || null });
-        if (action === 'mine') return json({ rooms: await service.mine(who.account) });
+        if (action === 'mine') return json({ rooms: await service.mine(who.account), visited: await service.visited(who.account) });
         if (action === 'room') return json(roomView(await service.access(slug, who), who.account));
         if (action === 'playlist') return json({ source: service.playlist(await service.access(slug, who)) });
         if (action === 'status') return json(await service.status(slug, who));
@@ -39,6 +39,19 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       const ip = context.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
       if (['register', 'recover', 'login', 'join', 'verify', 'google-login'].includes(action)) {
         await rateLimit(store, `entry:${ip}`, 40, 900, clock?.());
+      }
+      if (action === 'report') {
+        if (!reportReady(env)) throw new RoomError('El canal de avisos aún no está configurado.', 503);
+        await rateLimit(store, `notice:${ip}`, 5, 3600, clock?.());
+        const category = input.category, details = typeof input.details === 'string' ? input.details.trim() : '';
+        const email = normalizeEmail(input.email);
+        const resource = typeof input.resource === 'string' ? input.resource.trim() : '';
+        if (!['copyright', 'illegal', 'other'].includes(category) || details.length < 20 || details.length > 4000
+          || !validEmail(email) || resource.length > 300 || (slug && !validRoom(slug))) {
+          throw new RoomError('Completa el tipo de aviso, un correo válido y una descripción de 20 a 4000 caracteres.', 400);
+        }
+        await sendNotice({ category, room: slug, resource, email, details }, env);
+        return json({ ok: true, message: 'Aviso recibido para su revisión.' }, 200);
       }
       if (action === 'google-start') {
         await rateLimit(store, `google-start:${ip}`, 60, 900, clock?.());
@@ -81,7 +94,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
           if (env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY) await captcha(input.captcha, request, 'access', env);
         }
         try {
-          const result = await service.join(slug, input.password);
+          const result = await service.join(slug, input.password, who.account);
           return json({ room: result.room }, 200, { 'Set-Cookie': cookie(GUEST_COOKIE, result.token, request) });
         } catch (error) {
           if (error.status === 401) {
@@ -102,6 +115,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
         response.headers.append('Set-Cookie', cookie(GOOGLE_COOKIE, '', request, 0));
         return response;
       }
+      if (action === 'forget-visited') return json(await service.forgetVisited(who.account, slug));
       if (action === 'create') { await rateLimit(store, `create:${who.account?.id || ip}`, 8, 3600, clock?.()); return json(await service.create(who.account, input), 201); }
       if (action === 'update') return json(await service.update(slug, who, input));
       if (action === 'delete') { await service.remove(slug, who, input.revision); return json({ ok: true }); }

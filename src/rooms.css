@@ -229,3 +229,14 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.visited-section { margin-top: 38px; padding-top: 26px; border-top: 1px solid #ffffff14; }
+.visited-heading { margin-bottom: 20px; }
+.visited-heading h2 { font-size: 22px; color: #f2eadb; font-weight: 650; }
+.visited-heading p { margin-top: 7px; color: #9da5b4; font-size: 12px; line-height: 1.6; }
+.visited-card { min-width: 0; display: flex; flex-direction: column; }
+.visited-card .room-card { flex: 1; }
+.visited-remove { align-self: flex-start; margin: 10px 0 0 6px; border: 0; background: transparent; color: #9fa7b6; font-size: 12px; cursor: pointer; }
+.visited-remove:hover { color: #ffb3ac; text-decoration: underline; }
+.visited-remove:disabled { opacity: .45; cursor: wait; }
+.visited-empty { grid-column: 1 / -1; padding: 24px; border: 1px dashed #ffffff1c; border-radius: 14px; color: #a6aebe; font-size: 13px; }

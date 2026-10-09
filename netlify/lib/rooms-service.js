@@ -153,14 +153,23 @@ export class RoomsService {
     if (!room || room.deleted || (!owner && (!guest || ownerOnly))) throw new RoomError('No tienes acceso a esta sala.', 403);
     return room;
   }
-  async join(raw, password) {
+  async join(raw, password, account = null) {
     const slug = normalizeRoom(raw);
     const room = validRoom(slug) ? await read(this.store, `room/${slug}`) : null;
     const valid = await verifyPassword(password, room?.passwordHash || `scrypt:${'0'.repeat(64)}:${'0'.repeat(128)}`);
     if (!room || room.deleted || !valid) throw new RoomError('Sala o contraseña incorrectas.', 401);
     const token = await newSession(this.store, { kind: 'guest', roomId: slug, version: room.version }, this.clock());
+    // A prior visit is not authorization: the room password and guest session remain mandatory.
+    if (account?.verified && room.ownerId !== account.id) {
+      await mutate(this.store, `account/${account.id}`, (current) => {
+        if (!current?.verified) return current;
+        const visits = (current.visitedRooms || []).filter((item) => item.slug !== slug && validRoom(item.slug));
+        return { ...current, visitedRooms: [{ slug, visitedAt: this.clock() }, ...visits].slice(0, 40) };
+      });
+    }
     return { token, room: roomView(room) };
   }
+
   async reconcileRooms(account) {
     return mutate(this.store, `account/${account.id}`, async (current) => {
       const rooms = new Set(current.rooms || []), pending = [];
@@ -177,6 +186,23 @@ export class RoomsService {
     if (account.pendingRooms?.length) account = await this.reconcileRooms(account);
     const rooms = await Promise.all((account.rooms || []).map((slug) => read(this.store, `room/${slug}`)));
     return rooms.filter((room) => room && !room.deleted && room.ownerId === account.id).map((room) => roomView(room, account));
+  }
+  async visited(account) {
+    if (!account?.verified) throw new RoomError('Inicia sesión para ver tu historial.', 401);
+    const visits = (account.visitedRooms || []).filter((item) => validRoom(item.slug)).slice(0, 40);
+    const rooms = await Promise.all(visits.map((item) => read(this.store, `room/${item.slug}`)));
+    return visits.flatMap((visit, i) => rooms[i] && !rooms[i].deleted && rooms[i].ownerId !== account.id
+      ? [{ slug: rooms[i].slug, title: rooms[i].title, visitedAt: visit.visitedAt }] : []);
+  }
+  async forgetVisited(account, raw) {
+    if (!account?.verified) throw new RoomError('Inicia sesión para modificar tu historial.', 401);
+    const slug = normalizeRoom(raw);
+    if (!validRoom(slug)) throw new RoomError('Sala no válida.', 400);
+    await mutate(this.store, `account/${account.id}`, (current) => {
+      if (!current?.verified) throw new RoomError('Inicia sesión.', 401);
+      return { ...current, visitedRooms: (current.visitedRooms || []).filter((item) => item.slug !== slug) };
+    });
+    return { ok: true };
   }
   async create(account, { slug: raw, title, password }) {
     if (!account?.verified) throw new RoomError('Inicia sesión para crear una sala.', 401);
