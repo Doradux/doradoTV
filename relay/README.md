@@ -14,7 +14,7 @@ DORADO_APP_ORIGIN=https://doradotv.netlify.app
 DORADO_MAX_CONNECTIONS=3
 ```
 
-En Netlify usa el dominio `*.code.run` generado para ese puerto como `DORADO_RELAY_URL` y configura el mismo `DORADO_RELAY_SECRET`.
+En Crear sala o Ajustes de DoradoTV introduce el dominio `*.code.run` generado para ese servicio y la clave `DORADO_RELAY_SECRET` de **ese servicio de Northflank**. Cada sala necesita su propio servicio y dominio HTTPS.
 
 ## Despliegue alternativo: Railway
 
@@ -32,12 +32,7 @@ DORADO_MAX_CONNECTIONS=3
 
 No hace falta definir `PORT`, `HOST`, `DORADO_RELAY_DIR` ni `DORADO_RELAY_PUBLIC_URL` en Railway. El proceso usa `PORT` y `RAILWAY_PUBLIC_DOMAIN` automáticamente y guarda los segmentos temporales en `/tmp`.
 
-En Netlify añade:
-
-```text
-DORADO_RELAY_URL=https://<tu-dominio>.up.railway.app
-DORADO_RELAY_SECRET=<el mismo secreto>
-```
+En la sala de DoradoTV, introduce el dominio HTTPS de Railway en el campo URL del relay y la misma clave que configuraste en el servicio. No son variables globales de Netlify.
 
 `/health` es público únicamente para el health check de Railway. El resto del plano de control exige Bearer; el vídeo usa tokens temporales y CORS restringido a `DORADO_APP_ORIGIN`.
 
@@ -54,3 +49,11 @@ Si no queda ningún espectador, la emisión se cierra automáticamente. DORADO_M
 ## Autohospedado opcional
 
 También puede ejecutarse con `npm run relay` en un host Linux con Node 22 y FFmpeg. En ese caso configura además `DORADO_RELAY_DIR`, `DORADO_RELAY_PUBLIC_URL`, `HOST` y un reverse proxy HTTPS.
+
+## Relays privados independientes
+
+Cada sala necesita una instancia propia de este servidor, una URL HTTPS diferente y su propia clave DORADO_RELAY_SECRET en Northflank o Railway. El propietario introduce URL y clave al crear la sala o en Ajustes y pulsa Comprobar relay y clave. El backend comprueba el endpoint /health y la ruta /status con su clave; almacena los datos cifrados en la sala.
+
+Netlify ya no necesita DORADO_RELAY_URL ni DORADO_RELAY_SECRET globales: esas variables antiguas dejan de funcionar como configuración por defecto. NO las elimines antes de recuperar los valores para tu sala.
+
+Un relay admite múltiples espectadores de la misma URL HTTP usando una sola entrada FFmpeg. Las señales HTTPS directas no pasan por este relay.

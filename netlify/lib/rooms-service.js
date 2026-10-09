@@ -3,7 +3,7 @@ import { parsePlaylist } from '../../src/playlist.js';
 import { RoomError, mutate, read } from './room-store.js';
 import { hashPassword, verifyPassword, digest, secretToken, seal, unseal, newSession, nowSeconds } from './room-security.js';
 import { detectProviders, channelProvider, currentProgram, validateProviderCredentials, providerAccount } from './room-provider.js';
-import { createRelayClient } from './room-relay.js';
+import { createRelayClient, normalizeRelay } from './room-relay.js';
 
 export const MAX_PLAYLIST_BYTES = 10 * 1024 * 1024;
 export const UPLOAD_CHUNK_CHARS = 512 * 1024;
@@ -23,12 +23,50 @@ export function roomView(room, account) {
   return { slug: room.slug, title: room.title, owner: room.ownerId === account?.id, hasPlaylist: !!room.playlist,
     channelCount: room.channelCount || 0, limit: room.limit, detectedMaximum: room.detectedMaximum,
     revision: room.revision, updated: room.updated, created: room.created,
-    providerConfigured: !!room.providerCredentials, providerHost: room.ownerId === account?.id ? (room.providerHost || null) : null };
+    providerConfigured: !!room.providerCredentials, providerHost: room.ownerId === account?.id ? (room.providerHost || null) : null,
+    relayConfigured: !!room.relayCredentials, relayHost: room.ownerId === account?.id ? (room.relayHost || null) : null };
 }
 export class RoomsService {
-  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, verifyProvider = validateProviderCredentials, program = currentProgram, sendMail, relay } = {}) {
+  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, verifyProvider = validateProviderCredentials, program = currentProgram, sendMail, relay, verifyRelay, relayFactory = createRelayClient } = {}) {
     this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.verifyProvider = verifyProvider; this.program = program; this.sendMail = sendMail;
-    this.relay = relay ?? createRelayClient(env);
+    // Injected relay is for isolated tests; runtime always selects the room-specific relay.
+    this.testRelayClient = relay || null;
+    this.relayFactory = relayFactory;
+    this.verifyRelay = verifyRelay || ((cfg) => createRelayClient(cfg).verify());
+  }
+  relayFor(room) {
+    if (this.testRelayClient) return this.testRelayClient;
+    const cfg = room?.relayCredentials ? JSON.parse(unseal(room.relayCredentials, 'relay:' + room.slug, this.env)) : null;
+    return this.relayFactory(cfg);
+  }
+  async checkedRelay(input) {
+    const cfg = normalizeRelay(input);
+    let result;
+    try { result = await this.verifyRelay(cfg); }
+    catch (error) { throw new RoomError(error.message || 'No se pudo comprobar el relay.', 400); }
+    if (result?.valid !== true) throw new RoomError('El relay no confirmó las credenciales.', 400);
+    return cfg;
+  }
+  async testRelay(who, input, slug = null) {
+    if (!who?.account?.verified) throw new RoomError('Inicia sesión.', 401);
+    if (slug) await this.access(slug, who, true);
+    const cfg = await this.checkedRelay(input);
+    return { valid: true, host: new URL(cfg.url).hostname };
+  }
+  async claimRelay(cfg, slug) {
+    const key = 'relay-owner/' + digest(cfg.url);
+    const owner = await read(this.store, key);
+    if (owner?.slug === slug) return false;
+    if (owner) throw new RoomError('Ese relay ya está asignado a otra sala. Usa un servicio independiente.', 409);
+    const result = await this.store.setJSON(key, { slug }, { onlyIfNew: true });
+    if (!result.modified) throw new RoomError('Ese relay ya está asignado a otra sala.', 409);
+    return true;
+  }
+  async releaseRelay(cfg, slug) {
+    if (!cfg) return;
+    const key = 'relay-owner/' + digest(cfg.url);
+    const owner = await read(this.store, key);
+    if (owner?.slug === slug) await this.store.delete(key);
   }
   async googleLogin({ sub, email }) {
     // Google subjects are stable. Never merge accounts merely by matching email.
@@ -189,8 +227,8 @@ export class RoomsService {
     return rooms.filter((room) => room && !room.deleted && room.ownerId === account.id).map((room) => roomView(room, account));
   }
   async relayHealth(slug, who) {
-    await this.access(slug, who);
-    return typeof this.relay.health === 'function' ? this.relay.health() : { configured: !!this.relay.configured, ready: !!this.relay.configured };
+    const room = await this.access(slug, who);
+    return this.relayFor(room).health();
   }
   async visited(account) {
     if (!account?.verified) throw new RoomError('Inicia sesión para ver tu historial.', 401);
@@ -219,7 +257,7 @@ export class RoomsService {
     try { return await this.verifyProvider(input); }
     catch (error) { throw new RoomError(error.message || 'No se pudieron verificar las credenciales.', 400); }
   }
-  async create(account, { slug: raw, title, password, provider }) {
+  async create(account, { slug: raw, title, password, provider, relay: relayInput }) {
     if (!account?.verified) throw new RoomError('Inicia sesión para crear una sala.', 401);
     if (account.googleSub && !validUsername(account.username)) throw new RoomError('Elige primero tu nombre de usuario.', 403, { needsUsername: true });
     const slug = normalizeRoom(raw);
@@ -228,6 +266,7 @@ export class RoomsService {
     validatePassword(password);
     const passwordHash = await hashPassword(password);
     const checkedProvider = provider ? await this.checkedProvider(provider) : null;
+    const checkedRelay = await this.checkedRelay(relayInput);
     if (account.pendingRooms?.length) await this.reconcileRooms(account);
     const operation = randomUUID();
     // Reserve the owner's quota before claiming a globally unique room name.
@@ -237,10 +276,13 @@ export class RoomsService {
       if (current.rooms.length + pending.length >= 3) throw new RoomError('Puedes tener hasta 3 salas.', 409);
       return { ...current, pendingRooms: [...pending, { operation, slug, expires: this.clock() + 120 }] };
     });
-    let created = false;
+    let created = false, claimed = false;
     try {
+      claimed = await this.claimRelay(checkedRelay, slug);
       const room = { slug, creationOperation: operation, title: title.trim(), ownerId: account.id, passwordHash, version: 1, revision: 1, playlist: null, limit: null, detectedMaximum: null, providers: [], providerCredentials: checkedProvider ? seal(JSON.stringify(checkedProvider), 'provider:' + slug, this.env) : null,
         providerHost: checkedProvider ? new URL(checkedProvider.origin).hostname : null,
+        relayCredentials: seal(JSON.stringify(checkedRelay), 'relay:' + slug, this.env),
+        relayHost: new URL(checkedRelay.url).hostname,
         created: this.clock(), updated: this.clock() };
       const result = await this.store.setJSON(`room/${slug}`, room, { onlyIfNew: true });
       if (!result.modified) throw new RoomError('Ese nombre de sala ya está ocupado.', 409);
@@ -248,13 +290,21 @@ export class RoomsService {
       await mutate(this.store, `account/${account.id}`, (current) => ({ ...current, rooms: [...new Set([...current.rooms, slug])], pendingRooms: (current.pendingRooms || []).filter((item) => item.operation !== operation) }));
       return roomView(room, account);
     } finally {
-      if (!created) await mutate(this.store, `account/${account.id}`, (current) => ({ ...current, pendingRooms: (current.pendingRooms || []).filter((item) => item.operation !== operation) }));
+      if (!created) {
+        if (claimed) await this.releaseRelay(checkedRelay, slug);
+        if (!created) await mutate(this.store, `account/${account.id}`, (current) => ({ ...current, pendingRooms: (current.pendingRooms || []).filter((item) => item.operation !== operation) }));
+      }
     }
   }
   async update(slug, who, input) {
     const old = await this.access(slug, who, true);
     const hash = input.password ? (validatePassword(input.password), await hashPassword(input.password)) : null;
     const checkedProvider = input.provider ? await this.checkedProvider(input.provider) : null;
+    const oldRelay = old.relayCredentials ? JSON.parse(unseal(old.relayCredentials, 'relay:' + slug, this.env)) : null;
+    const checkedRelay = input.relay ? await this.checkedRelay(input.relay) : null;
+    const changeUrl = !!checkedRelay && checkedRelay.url !== oldRelay?.url;
+    let newClaim = false;
+    if (changeUrl) newClaim = await this.claimRelay(checkedRelay, slug);
     // Never leave an old provider's streaming account attached after changing credentials.
     const previousAccount = old.providerCredentials
       ? JSON.parse(unseal(old.providerCredentials, 'provider:' + slug, this.env)) : null;
@@ -267,7 +317,9 @@ export class RoomsService {
       return linked && (linked.origin !== checkedProvider.origin ||
         linked.username !== checkedProvider.username || linked.password !== checkedProvider.password);
     });
-    const next = await mutate(this.store, `room/${slug}`, (room) => {
+    let next;
+    try {
+      next = await mutate(this.store, `room/${slug}`, (room) => {
       if (room.deleted || room.ownerId !== who.account.id) throw new RoomError('Sala no disponible.', 403);
       if (input.revision !== room.revision) throw new RoomError('La sala ha cambiado. Actualiza la página antes de guardar.', 409);
       const title = input.title ?? room.title;
@@ -278,14 +330,21 @@ export class RoomsService {
       return { ...room, title: title.trim(), limit, passwordHash: hash || room.passwordHash,
         providerCredentials: checkedProvider ? seal(JSON.stringify(checkedProvider), 'provider:' + slug, this.env) : room.providerCredentials,
         providerHost: checkedProvider ? new URL(checkedProvider.origin).hostname : room.providerHost,
+        relayCredentials: checkedRelay ? seal(JSON.stringify(checkedRelay), 'relay:' + slug, this.env) : room.relayCredentials,
+        relayHost: checkedRelay ? new URL(checkedRelay.url).hostname : room.relayHost,
         playlist: clearPlaylist ? null : room.playlist,
         providers: clearPlaylist ? [] : room.providers,
         channelCount: clearPlaylist ? 0 : room.channelCount,
         detectedMaximum: clearPlaylist ? null : room.detectedMaximum,
         limit: clearPlaylist ? null : limit,
-        version: hash || input.revoke || checkedProvider ? room.version + 1 : room.version, revision: room.revision + 1, updated: this.clock() };
-    });
+        version: hash || input.revoke || checkedProvider || checkedRelay ? room.version + 1 : room.version, revision: room.revision + 1, updated: this.clock() };
+      });
+    } catch (error) {
+      if (newClaim) await this.releaseRelay(checkedRelay, slug);
+      throw error;
+    }
     if (next.version !== old.version) await this.clearRoomLeases(old);
+    if (changeUrl) await this.releaseRelay(oldRelay, slug);
     return roomView(next, who.account);
   }
   async beginUpload(slug, who, { filename, revision, bytes, totalChunks }) {
@@ -370,9 +429,10 @@ export class RoomsService {
     const leases = active?.leases || [];
     const buckets = new Set([`room-${room.slug}`, ...room.providers.map((item) => item.id), ...leases.map((item) => item.provider)]);
     await Promise.all([...buckets].filter(Boolean).map((id) => mutate(this.store, `leases/${id}`, (state) => ({ ...state, leases: (state?.leases || []).filter((lease) => lease.room !== room.slug) }))));
-    if (this.relay.configured) {
+    const relay = this.relayFor(room);
+    if (relay.configured) {
       const emissions = [...new Set(leases.map((lease) => lease.relayEmissionId).filter(Boolean))];
-      await Promise.allSettled(emissions.map((id) => this.relay.close(id, 'Propietario')));
+      await Promise.allSettled(emissions.map((id) => relay.close(id, 'Propietario')));
     }
   }
   async remove(slug, who, revision) {
@@ -382,6 +442,7 @@ export class RoomsService {
       return { slug, ownerId: current.ownerId, deleted: true, revision: current.revision + 1, version: current.version + 1 };
     });
     await this.clearRoomLeases(room);
+    if (room.relayCredentials) await this.releaseRelay(JSON.parse(unseal(room.relayCredentials, 'relay:' + slug, this.env)), slug);
     await this.store.delete(`addons/${slug}`);
     await mutate(this.store, `account/${who.account.id}`, (account) => ({ ...account, rooms: account.rooms.filter((value) => value !== slug) }));
   }
@@ -392,7 +453,8 @@ export class RoomsService {
     if (!channel) throw new RoomError('El canal ya no está disponible.', 404);
     const protocol = new URL(channel.url).protocol;
     const needsRelay = protocol === 'http:';
-    if (needsRelay && !this.relay.configured) throw new RoomError('Este canal usa HTTP y necesita configurar el relay HTTPS.', 503);
+    const relay = this.relayFor(room);
+    if (needsRelay && !relay.configured) throw new RoomError('Esta sala no tiene relay configurado. Pide al propietario que lo configure en Ajustes.', 503);
     const provider = channelProvider(channel, slug, this.env);
     const maximum = room.providers.find((item) => item.id === provider)?.maximum ?? null;
     const id = randomUUID();
@@ -415,7 +477,7 @@ export class RoomsService {
     let relaySession = null;
     try {
       if (needsRelay) {
-        relaySession = await this.relay.start({ ...channel, viewerName }, who.sessionId, tab);
+        relaySession = await relay.start({ ...channel, viewerName }, who.sessionId, tab);
         await Promise.all(keys.map((key) => mutate(this.store, `leases/${key}`, (state) => ({
           ...state,
           leases: (state?.leases || []).map((item) => item.id === id
@@ -432,7 +494,7 @@ export class RoomsService {
       return { id, provider, url: relaySession?.url || channel.url, expires: lease.expires };
     } catch (error) {
       await Promise.all(keys.map((key) => this.releaseBucket(key, id, who.sessionId)));
-      if (relaySession?.sessionId) await this.relay.ping(relaySession.sessionId, who.sessionId, false).catch(() => {});
+      if (relaySession?.sessionId) await relay.ping(relaySession.sessionId, who.sessionId, false).catch(() => {});
       throw error;
     }
   }
@@ -441,6 +503,7 @@ export class RoomsService {
   }
   async playback(slug, who, input, action) {
     const room = await this.access(slug, who, action === 'close');
+    const relay = this.relayFor(room);
     const bucket = `room-${slug}`;
     const state = await read(this.store, `leases/${bucket}`);
     const lease = state?.leases.find((item) => item.id === input.id && (item.sessionId === who.sessionId || action === 'close'));
@@ -449,11 +512,11 @@ export class RoomsService {
     const keys = [...new Set([bucket, provider])];
     if (action !== 'ping') {
       await Promise.all(keys.map((key) => this.releaseBucket(key, lease.id, who.sessionId, action === 'close' ? slug : undefined)));
-      if (lease.relaySessionId && this.relay.configured) {
+      if (lease.relaySessionId && relay.configured) {
         if (action === 'close' && lease.relayEmissionId) {
-          await this.relay.close(lease.relayEmissionId, who.account?.username || who.account?.name || 'Propietario').catch(() => {});
+          await relay.close(lease.relayEmissionId, who.account?.username || who.account?.name || 'Propietario').catch(() => {});
         } else {
-          await this.relay.ping(lease.relaySessionId, lease.sessionId, false).catch(() => {});
+          await relay.ping(lease.relaySessionId, lease.sessionId, false).catch(() => {});
         }
       }
       return { ok: true };
@@ -468,10 +531,10 @@ export class RoomsService {
         });
       }
     }
-    if (alive && lease.relaySessionId && this.relay.configured) {
+    if (alive && lease.relaySessionId && relay.configured) {
       try {
-        const relay = await this.relay.ping(lease.relaySessionId, lease.sessionId, true);
-        if (relay?.kicked) {
+        const heartbeat = await relay.ping(lease.relaySessionId, lease.sessionId, true);
+        if (heartbeat?.kicked) {
           alive = false;
           await Promise.all(keys.map((key) => this.releaseBucket(key, lease.id, lease.sessionId)));
         }
