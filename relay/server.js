@@ -109,7 +109,9 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const lockFile = join(directory, 'worker.lock');
   try {
     const previous = Number(readFileSync(lockFile, 'utf8'));
-    if (Number.isInteger(previous) && previous > 0) {
+    if (Number.isInteger(previous) && previous > 0 && previous !== process.pid) {
+      // Container PIDs commonly restart at 1. A stale PID 1 belongs to this
+      // new process, not a concurrently running relay.
       try { process.kill(previous, 0); throw new Error('Ya hay un relay activo en este host.'); }
       catch (error) { if (error.code !== 'ESRCH') throw error; }
     }

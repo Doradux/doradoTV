@@ -209,3 +209,18 @@ test('one upstream serves two viewers and closing it revokes both media tokens',
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('relay can restart in a container that reuses PID 1 with a stale worker lock', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dorado-restart-lock-'));
+  const lockFile = join(directory, 'worker.lock');
+  writeFileSync(lockFile, String(process.pid));
+  const relay = createRelay({
+    directory, secret: 'restart-test-secret', appOrigin: 'http://127.0.0.1:5199',
+  });
+  try {
+    assert.equal(readFileSync(lockFile, 'utf8'), String(process.pid));
+  } finally {
+    relay.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
