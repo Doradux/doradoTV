@@ -16,7 +16,7 @@ import { iconSvg, morphSvg, escapeHtml } from './ui.js';
 import { roomApi, navigateRoom } from './room-api.js';
 import { setupRemotePlayback } from './remote-playback.js';
 import { mountRoomAddons } from './stremio-ui.js';
-import { formatPlaybackTime, seekTarget } from './vod-utils.js';
+import { formatPlaybackTime, seekTarget, vodSeekRange, timeFromSlider, sliderFromTime } from './vod-utils.js';
 import { setupFullscreenControls } from './fullscreen-controls.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
@@ -45,7 +45,7 @@ function mountPlayer(session, account) {
       <section class="player-column" aria-label="Reproductor">
         <div id="player-shell" class="player-shell">
           <div id="video-stage" class="video-stage">
-            <canvas id="ambient" width="96" height="54" aria-hidden="true"></canvas>
+            <canvas id="ambient" width="192" height="108" aria-hidden="true"></canvas>
             <video id="video" playsinline preload="none" x-webkit-airplay="allow" aria-label="Vídeo del canal seleccionado"></video>
             <div id="empty" class="empty-player">
               <div class="empty-icon">${iconSvg(TvMinimal, 'h-9 w-9')}</div>
@@ -283,6 +283,7 @@ function mountPlayer(session, account) {
     if (torrentClient) { const old = torrentClient; torrentClient = null; old.destroy(() => {}); }
     vodSession = null;
     vodNavigation = {};
+    scrubbingVod = false;
     for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
     $('#vod-tools').hidden = true;
     $('#vod-transport').hidden = true;
@@ -408,21 +409,26 @@ function mountPlayer(session, account) {
     $('#vod-prev').disabled = !navigation.previous;
     $('#vod-next').disabled = !navigation.next;
   }
+  let scrubbingVod = false;
   function updateVodProgress() {
     if (!vodSession) return;
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
-    const bounds = video.seekable.length ? { start: video.seekable.start(0), end: video.seekable.end(video.seekable.length - 1) } : null;
-    const canSeek = !vodSession.remux && duration > 0 && bounds && bounds.end > bounds.start;
+    const range = vodSeekRange(video, vodSession.remux);
+    const canSeek = !!range;
     for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).disabled = !canSeek;
-    if (!$('#vod-seek').matches(':active')) $('#vod-seek').value = canSeek ? String(Math.round(1000 * video.currentTime / duration)) : '0';
-    $('#vod-clock').textContent = formatPlaybackTime(video.currentTime) + ' / ' + (duration ? formatPlaybackTime(duration) : '--:--');
+    if (!scrubbingVod) $('#vod-seek').value = String(range ? sliderFromTime(video.currentTime, range) : 0);
+    if (!scrubbingVod) $('#vod-clock').textContent = formatPlaybackTime(video.currentTime) + ' / ' + (duration ? formatPlaybackTime(duration) : '--:--');
     $('#vod-seek').style.setProperty('--seek-fill', (Number($('#vod-seek').value) / 10) + '%');
   }
   function seekVod(seconds) {
-    if (!vodSession || vodSession.remux || !video.seekable.length) return;
-    const start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
-    const next = seekTarget(video.currentTime, seconds, start, end);
-    if (next !== null) video.currentTime = next;
+    if (!vodSession) return;
+    const range = vodSeekRange(video, vodSession.remux);
+    if (!range) return;
+    const next = seekTarget(video.currentTime, seconds, range.start, range.end);
+    if (next !== null) {
+      video.currentTime = next;
+      updateVodProgress();
+    }
   }
   async function playVod({ source, title, navigation = {} }) {
     stop();
@@ -858,14 +864,21 @@ function mountPlayer(session, account) {
   $('#vod-next').onclick = () => vodNavigation.next?.();
   $('#vod-back').onclick = () => seekVod(-10);
   $('#vod-forward').onclick = () => seekVod(10);
+  $('#vod-seek').addEventListener('pointerdown', () => { scrubbingVod = true; });
+  $('#vod-seek').addEventListener('pointercancel', () => { scrubbingVod = false; updateVodProgress(); });
   $('#vod-seek').oninput = () => {
-    if (!vodSession || vodSession.remux || !Number.isFinite(video.duration)) return;
-    $('#vod-clock').textContent = formatPlaybackTime(video.duration * Number($('#vod-seek').value) / 1000) + ' / ' + formatPlaybackTime(video.duration);
+    const range = vodSeekRange(video, vodSession?.remux);
+    if (!range) return;
+    scrubbingVod = true;
+    const position = timeFromSlider($('#vod-seek').value, range);
+    $('#vod-clock').textContent = formatPlaybackTime(position) + ' / ' + formatPlaybackTime(range.duration);
+    $('#vod-seek').style.setProperty('--seek-fill', (Number($('#vod-seek').value) / 10) + '%');
   };
   $('#vod-seek').onchange = () => {
-    if (!vodSession || vodSession.remux || !video.seekable.length || !Number.isFinite(video.duration)) return;
-    const start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
-    video.currentTime = Math.min(end, Math.max(start, video.duration * Number($('#vod-seek').value) / 1000));
+    const range = vodSeekRange(video, vodSession?.remux);
+    const position = timeFromSlider($('#vod-seek').value, range);
+    scrubbingVod = false;
+    if (position !== null) video.currentTime = position;
     updateVodProgress();
   };
   video.addEventListener('error', () => {

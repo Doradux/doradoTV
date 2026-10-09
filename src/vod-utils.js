@@ -25,6 +25,42 @@ export function seasonGroups(videos = []) {
     }));
 }
 
+
+/**
+ * A finite VOD duration is enough to make a seek attempt: some browsers do
+ * not populate HTMLMediaElement.seekable until after the first Range request.
+ * Prefer a reported seekable window when one exists (e.g. HLS DVR).
+ * A remuxed MKV delivered through a sequential pipe is never random-access.
+ */
+export function vodSeekRange(video, remux = false) {
+  const duration = video?.duration;
+  if (remux || !Number.isFinite(duration) || duration <= 0) return null;
+  let start = 0, end = duration;
+  try {
+    if (video.seekable?.length) {
+      start = Math.max(0, video.seekable.start(0));
+      end = Math.min(duration, video.seekable.end(video.seekable.length - 1));
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    }
+  } catch {
+    return { start: 0, end: duration };
+  }
+  return { start, end, duration };
+}
+
+export function timeFromSlider(value, range) {
+  if (!range) return null;
+  const fraction = Math.max(0, Math.min(1000, Number(value))) / 1000;
+  if (!Number.isFinite(fraction)) return null;
+  return range.start + (range.end - range.start) * fraction;
+}
+
+export function sliderFromTime(time, range) {
+  if (!range || !Number.isFinite(time)) return 0;
+  return Math.round(1000 * Math.max(0, Math.min(1,
+    (time - range.start) / (range.end - range.start))));
+}
+
 export function seekTarget(current, offset, start, end) {
   if (![current, offset, start, end].every(Number.isFinite) || end < start) return null;
   return Math.min(end, Math.max(start, current + offset));
