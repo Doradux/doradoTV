@@ -145,7 +145,10 @@ function mountPlayer(session, account) {
       const result = await inRoom('relay-health');
       relayStatus = result;
       if (!result.configured) {
-        $('#relay-health').hidden = true;
+        $('#relay-health').classList.add('is-offline');
+        $('#relay-health-text').textContent = session.owner
+          ? 'Esta sala no tiene relay. Configúralo en Ajustes de la sala.'
+          : 'El propietario aún no ha configurado el servidor de vídeo de esta sala.';
         return;
       }
       if (result.ready) {
@@ -590,9 +593,11 @@ function mountPlayer(session, account) {
       favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${channel.name}`);
       if (onlyFavorites) setTimeout(renderChannels, 250);
     } else {
-      if (channel.url.startsWith('http:') && relayStatus.configured && !relayStatus.ready) {
-        setStatus('El servidor de vídeo aún no está disponible. Espera o usa «Comprobar de nuevo».', true);
-        probeRelay();
+      if (channel.url.startsWith('http:') && !relayStatus.ready) {
+        setStatus(relayStatus.configured
+          ? 'El servidor de vídeo aún no está disponible. Espera o vuelve a comprobarlo.'
+          : 'Esta sala no tiene relay configurado. Pide al propietario que lo añada en Ajustes.', true);
+        if (relayStatus.configured) probeRelay();
         return;
       }
       play(channel);

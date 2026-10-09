@@ -10,6 +10,7 @@ import { memoryBlobStore } from './helpers/blob-store.js';
 
 const env = { DORADO_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), GOOGLE_CLIENT_ID: '123-test.apps.googleusercontent.com' };
 const origin = 'https://app.example.test';
+const testRelay = (slug) => ({url: 'https://' + slug + '.example.com', secret: 'private-relay-key-' + slug});
 const pair = await generateKeyPair('RS256');
 const jwk = { ...await exportJWK(pair.publicKey), kid: 'test-key', alg: 'RS256' };
 const keys = createLocalJWKSet({ keys: [jwk] });
@@ -19,7 +20,7 @@ const sign = (nonce, overrides = {}, key = pair.privateKey) => new SignJWT({ ...
 function fixture() {
   const store = memoryBlobStore(); let time = now;
   const clock = () => time;
-  const handler = createRoomsHandler({ getStore: () => store, env, clock, googleVerify: (credential, nonce, config) => verifyGoogleCredential(credential, nonce, config, keys, time) });
+  const handler = createRoomsHandler({ getStore: () => store, env, clock, verifyRelay: async () => ({valid: true}), googleVerify: (credential, nonce, config) => verifyGoogleCredential(credential, nonce, config, keys, time) });
   const post = (action, data = {}, cookies = '', from = origin) => handler(new Request(`${origin}/.netlify/functions/rooms?action=${action}`, { method: 'POST', headers: { origin: from, cookie: cookies, 'Content-Type': 'application/json' }, body: JSON.stringify(data) }), { ip: '127.0.0.1' });
   return { store, post, handler, clock, advance: (seconds) => { time += seconds; }, service: new RoomsService(store, { env, clock }) };
 }
@@ -58,14 +59,14 @@ test('Google sign-in works without SMTP/CAPTCHA and requires a username before c
   assert.equal(config.registration, false); assert.equal(config.googleClientId, env.GOOGLE_CLIENT_ID);
   const user = await login(f);
   assert.equal(user.account.needsUsername, true);
-  assert.equal((await f.post('create', { slug: 'my-room', title: 'Room', password: 'Very private password' }, user.cookie)).status, 403);
+  assert.equal((await f.post('create', { slug: 'my-room', title: 'Room', password: 'Very private password', relay: testRelay('my-room') }, user.cookie)).status, 403);
   assert.equal((await f.post('username', { username: 'my username' }, user.cookie)).status, 400);
   assert.equal((await f.post('username', { username: 'marcos' })).status, 401);
   const profile = await f.post('username', { username: 'marcos' }, user.cookie);
   assert.equal(profile.status, 200); assert.equal((await profile.json()).account.needsUsername, false);
   const account = (await identity(f.store, user.request, f.clock())).account;
   assert.equal(account.username, 'marcos'); assert.equal(account.passwordHash, undefined);
-  assert.equal((await f.post('create', { slug: 'my-room', title: 'Room', password: 'Very private password' }, user.cookie)).status, 201);
+  assert.equal((await f.post('create', { slug: 'my-room', title: 'Room', password: 'Very private password', relay: testRelay('my-room') }, user.cookie)).status, 201);
   assert.equal((await f.post('logout', {}, user.cookie)).status, 200);
   assert.equal((await identity(f.store, user.request, f.clock())).account, null);
 });
@@ -95,7 +96,7 @@ test('expired challenges and unconfigured Google access fail closed', async () =
 test('Google accounts use subject IDs, preserve rooms on email changes and never merge by email', async () => {
   const f = fixture(), first = await login(f);
   await f.post('username', { username: 'first' }, first.cookie);
-  await f.post('create', { slug: 'first-room', title: 'Room', password: 'Very private password' }, first.cookie);
+  await f.post('create', { slug: 'first-room', title: 'Room', password: 'Very private password', relay: testRelay('first-room') }, first.cookie);
   const changed = await login(f, { email: 'changed@gmail.com' });
   assert.equal(changed.account.id, first.account.id); assert.equal(changed.account.username, 'first');
   assert.equal((await f.service.mine((await identity(f.store, changed.request, f.clock())).account)).length, 1);

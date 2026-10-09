@@ -26,11 +26,15 @@ The same room video player handles both live channels and on-demand streams. Sel
 
 The owner manages room addons with a separate Manage addons button. Sources must be authorized and supported by browser codecs/CORS. WebTorrent attempts to play compatible MP4/WebM torrents **inside the room player**, using browser-compatible WebRTC peers. Traditional BitTorrent seeders are not directly accessible from a browser, so torrent seed counts do not guarantee playback.
 
-### Shared relay and recovery
+### One independently configured relay per room
 
-Netlify hosts the frontend and room APIs. One **shared** external relay handles HTTP live channels by converting them to HTTPS HLS with Node.js/FFmpeg; individual rooms do not need individual relays. The production Netlify configuration points to a Northflank-style .run domain, with Railway deployment instructions also available.
+Each new room requires its own external relay instance with an independent HTTPS URL and private key. This is **not** the IPTV/Xtream provider account. The owner verifies the relay in the creation form. Both /health and the authenticated /status must pass before the room is created, and room settings allow rotation after verification.
 
-On entering a room the app checks relay /health and attempts repeated wake-up probes if unavailable, showing its status. Health requests can wake a sleeping deployment only when the hosting platform allows request-driven activation; they cannot restart a stopped container administratively. While video initializes, Play is disabled. A Retry connection button appears on failures; selecting channels scrolls smoothly to the player. Infrastructure resources and provider connection limits remain finite.
+The configuration is stored server-side, encrypted per room using AES-256-GCM with associated room data. Guests cannot read relay credentials. A relay URL can only be assigned to one room. The former Netlify-wide relay is NOT used as a fallback, including for pre-existing rooms: their owners need to configure a relay in Room settings to play HTTP channels.
+
+A relay accepts one upstream HTTP connection per distinct channel URL, converting it with FFmpeg to HLS for several authorized viewers of that SAME channel/URL. Direct HTTPS channels still bypass this relay, so there is no upstream deduplication for them. Availability checks target the room-specific server and attempt to wake it; requests cannot start a service that the hosting provider has manually stopped.
+
+The previous relay was hosted on Northflank under a code.run domain. Find its address in Northflank service → Ports/Networking, and its key in the service's environment variables. Your old global Netlify DORADO_RELAY_URL and DORADO_RELAY_SECRET may still exist for retrieval, but they are ignored by the new version. Copy the values before deleting them.
 
 ### Responsible use and legal notices
 
@@ -41,7 +45,7 @@ Use only authorized M3U channels, addons and media. The [Responsible use and not
 1. Use Node.js 22, then run npm ci, npm test and npm run build.
 2. Deploy via netlify.toml; the output folder is dist and Netlify Functions live in netlify/functions.
 3. Configure DORADO_ENCRYPTION_KEY, GOOGLE_CLIENT_ID, and the canonical site URL. See [.env.example](.env.example). Keep an offline backup of your encryption key.
-4. Deploy the external HTTPS relay and configure DORADO_RELAY_URL and DORADO_RELAY_SECRET. See [relay setup](relay/README.md).
+4. Deploy an independent relay for each room and configure the URL/key in the new-room or room-settings form. See [relay setup](relay/README.md).
 5. Optionally enable content notices with DORADO_REPORT_EMAIL, SMTP_USER, SMTP_PASSWORD and optional SMTP_HOST/SMTP_PORT, then verify a real email delivery.
 6. Development: npm run dev -- --port 5199 --strictPort.
 
@@ -180,3 +184,13 @@ El relay es una infraestructura **compartida** alojada fuera de Netlify, no un r
 En Cine y series se reutiliza el reproductor principal de las M3U. El panel lateral muestra búsqueda, resultados, temporadas, episodios y fuentes. La búsqueda usa automáticamente todos los catálogos compatibles, sin selector de motor. El contenido entra con animaciones suaves y escalonadas. Las series tienen anterior/siguiente episodio, barra de tiempo y saltos de 10 segundos.
 
 WebTorrent permite **intentar** reproducir torrents dentro de la app si hay pares WebRTC compatibles y vídeo MP4/WebM reproducible; los seeders de BitTorrent tradicionales no garantizan reproducción web. Utiliza exclusivamente fuentes autorizadas.
+
+### Relay propio por sala
+
+Cada sala necesita su propio servicio relay HTTPS y clave privada. Es distinto del proveedor IPTV. Se verifica el servicio en la creación de la sala y en Ajustes antes de guardar: las llamadas /health y /status autenticadas deben funcionar.
+
+Las credenciales se cifran por sala (AES-256-GCM) y no se muestran a invitados. No se permite asignar la misma URL de relay a dos salas diferentes, y ya no existe relay global por defecto. Las salas antiguas deben configurarlo manualmente para reproducir canales HTTP; no heredarán las claves antiguas de Netlify.
+
+Tu relay original estaba alojado en Northflank, mediante un dominio code.run. Busca el servicio en Northflank → Ports/Networking y su variable DORADO_RELAY_SECRET en Environment variables. También puedes consultar los valores anteriores en las variables de entorno del proyecto Netlify antes de eliminarlas. No compartas la clave privada con otros propietarios.
+
+El relay comparte una conexión del proveedor entre espectadores de una misma URL HTTP. Los canales HTTPS directos siguen reproduciéndose sin atravesar el relay y no tienen esa deduplicación.

@@ -117,6 +117,12 @@ export async function mountDashboard(app, account) {
   <label>Contraseña del proveedor<input id="create-provider-pass" type="password" maxlength="256" required autocomplete="new-password"></label>
   <button id="create-verify-provider" type="button" class="secondary-button">Comprobar credenciales</button>
   <p id="create-provider-status" class="form-message" role="status"></p>
+</fieldset><fieldset class="provider-fields relay-fields"><legend>Relay privado de esta sala</legend>
+  <small class="field-help">Despliega tu relay en Northflank u otro alojamiento y configura un servicio diferente para cada sala.</small>
+  <label>URL HTTPS del relay<input id="create-relay-url" type="url" placeholder="https://mi-relay.code.run" required autocomplete="off"></label>
+  <label>Clave privada del relay<input id="create-relay-secret" type="password" minlength="16" maxlength="256" required autocomplete="new-password"></label>
+  <button id="create-verify-relay" type="button" class="secondary-button">Comprobar relay y clave</button>
+  <p id="create-relay-status" class="form-message" role="status"></p>
 </fieldset><p class="form-message" id="create-message" role="status"></p><button type="submit" class="primary-button">Crear sala ${iconSvg(ArrowRight)}</button></form></section><div id="rooms-grid" class="rooms-grid" aria-live="polite"><p class="list-empty">Cargando tus salas…</p></div><section class="visited-section" aria-labelledby="visited-heading">
   <div class="visited-heading"><div><h2 id="visited-heading">Salas visitadas</h2><p>Salas de otros propietarios a las que has entrado con tu cuenta. Para volver a entrar puede ser necesaria la contraseña.</p></div></div>
   <div id="visited-grid" class="rooms-grid visited-grid" aria-live="polite"><p class="visited-empty">Cargando tu historial…</p></div>
@@ -164,14 +170,39 @@ export async function mountDashboard(app, account) {
       app.querySelector('#create-provider-status').textContent = error.message;
     } finally { button.disabled = false; }
   };
+  const createRelay = () => ({
+    url: app.querySelector('#create-relay-url').value.trim(),
+    secret: app.querySelector('#create-relay-secret').value,
+  });
+  createForm.querySelectorAll('.relay-fields input').forEach((field) => field.addEventListener('input', () => {
+    createForm.dataset.relayVerified = '';
+    app.querySelector('#create-relay-status').textContent = '';
+  }));
+  app.querySelector('#create-verify-relay').onclick = async () => {
+    const button = app.querySelector('#create-verify-relay');
+    button.disabled = true;
+    app.querySelector('#create-relay-status').textContent = 'Comprobando relay y clave…';
+    try {
+      const result = await roomApi('verify-relay', { data: { relay: createRelay() } });
+      createForm.dataset.relayVerified = 'true';
+      app.querySelector('#create-relay-status').textContent = 'Relay verificado: ' + result.host;
+    } catch (error) {
+      createForm.dataset.relayVerified = '';
+      app.querySelector('#create-relay-status').textContent = error.message;
+    } finally { button.disabled = false; }
+  };
   app.querySelector('#create-room').onsubmit = async (event) => {
     event.preventDefault(); const button = event.currentTarget.querySelector('button[type="submit"]');
     if (event.currentTarget.dataset.providerVerified !== 'true') {
       app.querySelector('#create-provider-status').textContent = 'Comprueba las credenciales antes de crear la sala.';
       return;
     }
+    if (event.currentTarget.dataset.relayVerified !== 'true') {
+      app.querySelector('#create-relay-status').textContent = 'Comprueba tu relay y su clave antes de crear la sala.';
+      return;
+    }
     button.disabled = true;
-    try { const room = await roomApi('create', { data: { ...Object.fromEntries(new FormData(event.currentTarget)), provider: createProvider() } }); navigateRoom(room.slug); }
+    try { const room = await roomApi('create', { data: { ...Object.fromEntries(new FormData(event.currentTarget)), provider: createProvider(), relay: createRelay() } }); navigateRoom(room.slug); }
     catch (error) { app.querySelector('#create-message').textContent = error.message; button.disabled = false; }
   };
   try {
@@ -203,6 +234,12 @@ export function mountRoomSettings(shell, initialRoom, opener, { onUpdate, onRevo
   <label>Contraseña<input id="settings-provider-pass" type="password" maxlength="256" autocomplete="new-password" placeholder="Nueva contraseña"></label>
   <button id="settings-verify-provider" type="button" class="secondary-button">Comprobar credenciales</button>
   <p id="settings-provider-status" class="form-message" role="status"></p>
+</fieldset><fieldset class="provider-fields relay-fields"><legend>Relay privado de la sala</legend>
+  <p id="relay-current" class="field-help"></p>
+  <label>URL HTTPS del relay<input id="settings-relay-url" type="url" placeholder="https://mi-relay.code.run" autocomplete="off"></label>
+  <label>Clave privada del relay<input id="settings-relay-secret" type="password" minlength="16" maxlength="256" autocomplete="new-password" placeholder="Clave secreta del servidor"></label>
+  <button id="settings-verify-relay" type="button" class="secondary-button">Comprobar relay y clave</button>
+  <p id="settings-relay-status" class="form-message" role="status"></p>
 </fieldset><div><label id="limit-label" class="field-label">Conexiones simultáneas en la app</label><div class="category-field"><select id="room-limit" hidden tabindex="-1" aria-hidden="true"></select><button id="room-limit-trigger" type="button" role="combobox" class="select-trigger" aria-labelledby="limit-label room-limit-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="room-limit-options"><span id="room-limit-value"></span>${morphSvg(ChevronDown, 'room-limit-chevron', 'h-4 w-4')}</button><div id="room-limit-options" class="select-menu" role="listbox" aria-label="Conexiones simultáneas" aria-hidden="true"></div></div><input id="custom-limit" type="number" min="1" max="10000" step="1" aria-label="Número de conexiones" class="hidden" /><p id="limit-description" class="field-help"></p></div><p class="form-message" id="settings-message" role="status"></p><button type="submit" class="primary-button">Guardar cambios</button></form><div class="settings-actions"><button id="revoke-room" class="secondary-button">Cerrar todos los accesos</button><button id="export-room" class="secondary-button">${iconSvg(Download, 'h-4 w-4')} Exportar copia</button><button id="delete-room" class="danger-button">Eliminar sala</button></div><div id="room-confirm" class="confirmation-box hidden"><p id="confirm-description"></p><div><button id="confirm-action" class="danger-button">Confirmar</button><button id="confirm-cancel" class="secondary-button">Cancelar</button></div></div></div>`;
   shell.append(modal);
   const $ = (query) => modal.querySelector(query);
@@ -233,9 +270,36 @@ export function mountRoomSettings(shell, initialRoom, opener, { onUpdate, onRevo
       $('#settings-provider-status').textContent = error.message;
     } finally { button.disabled = false; }
   };
+  const relayInput = () => ({
+    url: $('#settings-relay-url').value.trim(),
+    secret: $('#settings-relay-secret').value,
+  });
+  const relayChanged = () => Object.values(relayInput()).some(Boolean);
+  $('#settings-form').querySelectorAll('.relay-fields input').forEach((field) =>
+    field.addEventListener('input', () => {
+      $('#settings-form').dataset.relayVerified = '';
+      $('#settings-relay-status').textContent = '';
+    }));
+  $('#settings-verify-relay').onclick = async () => {
+    const button = $('#settings-verify-relay');
+    button.disabled = true;
+    $('#settings-relay-status').textContent = 'Comprobando relay y clave…';
+    try {
+      const result = await roomApi('verify-relay', { room: room.slug, data: { relay: relayInput() } });
+      $('#settings-form').dataset.relayVerified = 'true';
+      $('#settings-relay-status').textContent = 'Relay verificado: ' + result.host;
+    } catch (error) {
+      $('#settings-form').dataset.relayVerified = '';
+      $('#settings-relay-status').textContent = error.message;
+    } finally { button.disabled = false; }
+  };
   function refresh(next = room) {
     room = next; $('#settings-form').reset(); $('[name="title"]').value = room.title;
-    $('#settings-form').dataset.providerVerified = '';
+    $('#settings-form').dataset.relayVerified = '';
+    $('#relay-current').textContent = room.relayConfigured
+      ? 'Relay actual: ' + (room.relayHost || 'configurado') + '. Deja estos campos vacíos para mantenerlo.'
+      : 'Sin relay configurado. Los canales HTTP no funcionarán hasta que añadas uno.';
+    $('#settings-relay-status').textContent = '';
     $('#provider-current').textContent = room.providerConfigured
       ? 'Proveedor actual: ' + (room.providerHost || 'configurado') + '. Deja los campos vacíos para mantenerlo.'
       : 'Configura un proveedor para esta sala.';
@@ -258,11 +322,14 @@ export function mountRoomSettings(shell, initialRoom, opener, { onUpdate, onRevo
   $('#settings-form').onsubmit = async (event) => {
     event.preventDefault(); const button = event.currentTarget.querySelector('[type="submit"]'); button.disabled = true;
     try {
+      const changedRelay = relayChanged();
+      if (changedRelay && event.currentTarget.dataset.relayVerified !== 'true') throw Error('Comprueba el relay nuevo antes de guardarlo.');
       const changed = providerChanged();
       if (changed && event.currentTarget.dataset.providerVerified !== 'true') throw Error('Comprueba las nuevas credenciales antes de guardarlas.');
       const next = await roomApi('update', { room: room.slug, data: {
         ...Object.fromEntries(new FormData(event.currentTarget)),
         ...(changed ? { provider: providerInput() } : {}),
+        ...(changedRelay ? { relay: relayInput() } : {}),
         limit: limitValue(), revision: room.revision,
       } });
       refresh(next); onUpdate(next); message(next.hasPlaylist ? 'Cambios guardados.' : 'Cambios guardados. Si has cambiado de proveedor, vuelve a subir la lista M3U de esa cuenta.');

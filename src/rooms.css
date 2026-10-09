@@ -246,3 +246,11 @@
 .provider-fields label{display:grid;gap:6px;font-size:12px}
 .provider-fields input{min-width:0;max-width:100%}
 .provider-fields .secondary-button{justify-self:start;min-height:36px}
+
+/* Two independent sets of sensitive credentials must remain usable on mobile. */
+.room-settings-panel { max-height: min(92dvh, 980px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.relay-fields { border-color: #86bcfa35; }
+.relay-fields legend { color: #b4d5fb; }
+.relay-fields .field-help { overflow-wrap: anywhere; }
+.relay-fields button:disabled { opacity: .58; cursor: wait; }
+@media (max-width: 580px) { .room-settings-panel { max-height: 93dvh; } }

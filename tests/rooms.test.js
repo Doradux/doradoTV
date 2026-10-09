@@ -9,11 +9,12 @@ import { memoryBlobStore } from './helpers/blob-store.js';
 
 const env = { DORADO_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'), TURNSTILE_SITE_KEY: 'test-site-key', TURNSTILE_SECRET_KEY: 'test-secret', SMTP_USER: 'sender@example.test', SMTP_PASSWORD: 'test-only', DORADO_APP_URL: 'https://app.example.test' };
 const password = 'Una clave privada 123';
+const relayForSlug = (slug) => ({ url: 'https://' + slug + '.example.com', secret: 'room-relay-secret-' + slug });
 const playlist = '#EXTM3U\n#EXTINF:-1 group-title="General" tvg-logo="https://img.example.test/canal-uno.png",Canal uno\nhttps://media.example.test/live/user/password/1.m3u8\n#EXTINF:-1 group-title="Cine",Canal dos\nhttps://media.example.test/live/user/password/2.m3u8';
 function fixture(maximum = 3) {
   const store = memoryBlobStore(), emails = []; let time = 100000;
   const provider = channelProvider({ url: 'https://media.example.test/live/user/password/1.m3u8' }, 'test', env);
-  const service = new RoomsService(store, { env, clock: () => time, detect: async () => [{ id: provider, maximum }], program: async () => 'Noticias de prueba', sendMail: async (...args) => emails.push(args) });
+  const service = new RoomsService(store, { env, clock: () => time, detect: async () => [{ id: provider, maximum }], program: async () => 'Noticias de prueba', verifyRelay: async () => ({ valid: true }), sendMail: async (...args) => emails.push(args) });
   return { store, service, emails, provider, clock: () => time, advance: (seconds) => { time += seconds; } };
 }
 async function owner(f, email = 'owner@example.test') {
@@ -24,7 +25,7 @@ async function owner(f, email = 'owner@example.test') {
   return identity(f.store, request, f.clock());
 }
 async function room(f, who, slug = 'sala-casa') {
-  const created = await f.service.create(who.account, { slug, title: 'Mi sala', password });
+  const created = await f.service.create(who.account, { slug, title: 'Mi sala', password, relay: relayForSlug(slug) });
   return f.service.upload(slug, who, { filename: 'canales.m3u', source: playlist, revision: created.revision });
 }
 async function guest(f, slug = 'sala-casa') {
@@ -74,12 +75,12 @@ test('rooms enforce owner isolation, guest read-only access and encrypted storag
 
 test('simultaneous room creation protects the unique slug and per-owner quota', async () => {
   const f = fixture(), who = await owner(f);
-  const attempts = await Promise.allSettled(Array.from({ length: 5 }, (_, i) => f.service.create(who.account, { slug: `sala-${i}`, title: 'Sala', password })));
+  const attempts = await Promise.allSettled(Array.from({ length: 5 }, (_, i) => f.service.create(who.account, { slug: `sala-${i}`, title: 'Sala', password, relay: relayForSlug('sala-' + i) })));
   assert.equal(attempts.filter((item) => item.status === 'fulfilled').length, 3);
   const account = await read(f.store, `account/${who.account.id}`);
   assert.equal(account.rooms.length, 3);
   const other = await owner(f, 'other@example.test');
-  await assert.rejects(f.service.create(other.account, { slug: account.rooms[0], title: 'Otra', password }), { status: 409 });
+  await assert.rejects(f.service.create(other.account, { slug: account.rooms[0], title: 'Otra', password, relay: relayForSlug(account.rooms[0]) }), { status: 409 });
 });
 
 test('invalid uploads preserve the previous list and stale updates cannot overwrite it', async () => {
@@ -97,7 +98,7 @@ test('invalid uploads preserve the previous list and stale updates cannot overwr
 
 test('chunked uploads reassemble the playlist and incomplete uploads preserve the current list', async () => {
   const f = fixture(), who = await owner(f);
-  const created = await f.service.create(who.account, { slug: 'sala-casa', title: 'Mi sala', password });
+  const created = await f.service.create(who.account, { slug: 'sala-casa', title: 'Mi sala', password, relay: relayForSlug('sala-casa') });
   const split = Math.ceil(playlist.length / 2);
   const begin = await f.service.beginUpload(created.slug, who, {
     filename: 'canales.m3u',
@@ -164,7 +165,7 @@ test('only room owners can inspect viewers and their current channels', async ()
 test('HTTP channels use the HTTPS relay and relay sessions follow playback leases', async () => {
   const f = fixture(), who = await owner(f);
   const relayCalls = [];
-  f.service.relay = {
+  f.service.testRelayClient = {
     configured: true,
     async start(channel, identity, tab) {
       relayCalls.push(['start', channel.url, identity, tab]);
@@ -183,7 +184,7 @@ test('HTTP channels use the HTTPS relay and relay sessions follow playback lease
       return { ok: true };
     },
   };
-  const created = await f.service.create(who.account, { slug: 'sala-http', title: 'HTTP', password });
+  const created = await f.service.create(who.account, { slug: 'sala-http', title: 'HTTP', password, relay: relayForSlug('sala-http') });
   const httpPlaylist = playlist.replaceAll('https://media.example.test', 'http://media.example.test');
   const current = await f.service.upload(created.slug, who, { filename: 'http.m3u', source: httpPlaylist, revision: created.revision });
   const visitor = await guest(f, current.slug);
@@ -206,13 +207,14 @@ test('HTTP channels use the HTTPS relay and relay sessions follow playback lease
 
 test('HTTP channels fail clearly when no HTTPS relay is configured', async () => {
   const f = fixture(), who = await owner(f);
-  const created = await f.service.create(who.account, { slug: 'sala-http', title: 'HTTP', password });
+  const created = await f.service.create(who.account, { slug: 'sala-http', title: 'HTTP', password, relay: relayForSlug('sala-http') });
   const httpPlaylist = playlist.replaceAll('https://media.example.test', 'http://media.example.test');
   const current = await f.service.upload(created.slug, who, { filename: 'http.m3u', source: httpPlaylist, revision: created.revision });
   const visitor = await guest(f, current.slug);
+  await f.store.setJSON('room/sala-http', { ...await read(f.store, 'room/sala-http'), relayCredentials: null, relayHost: null });
   await assert.rejects(
     f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-http' }),
-    { status: 503, message: 'Este canal usa HTTP y necesita configurar el relay HTTPS.' },
+    { status: 503, message: 'Esta sala no tiene relay configurado. Pide al propietario que lo configure en Ajustes.' },
   );
   assert.equal((await f.service.status(current.slug, who)).active, 0);
 });

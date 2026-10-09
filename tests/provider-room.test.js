@@ -8,6 +8,7 @@ import { memoryBlobStore } from './helpers/blob-store.js';
 
 const env = { DORADO_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString('base64') };
 const profile = { id: 'owner', username: 'Owner', verified: true, rooms: [] };
+const relayConfig = { url: 'https://provider-room.example.com', secret: 'relay-key-for-provider-room' };
 const provider = { origin: 'https://test-provider.example', username: 'customer', password: 'secret-pass-123' };
 
 test('provider verification rejects malformed credentials and validates Xtream auth', async () => {
@@ -26,9 +27,9 @@ test('provider credentials are separately encrypted and private to room owner; u
   await store.setJSON('account/owner', profile);
   let count = 0;
   const service = new RoomsService(store, { env, clock: () => 80000,
-    verifyProvider: async (input) => { count++; if (input.password === 'bad') throw Error('Contraseña incorrecta'); return { ...input, maximum: 3 }; },
+    verifyRelay: async () => ({ valid: true }), verifyProvider: async (input) => { count++; if (input.password === 'bad') throw Error('Contraseña incorrecta'); return { ...input, maximum: 3 }; },
   });
-  const created = await service.create(profile, { slug: 'provider-room', title: 'Provider Room', password: 'room_password_123', provider });
+  const created = await service.create(profile, { slug: 'provider-room', title: 'Provider Room', password: 'room_password_123', provider, relay: relayConfig });
   assert.equal(created.providerConfigured, true);
   assert.equal(created.providerHost, 'test-provider.example');
   assert.equal(count, 1);
@@ -56,17 +57,17 @@ test('provider credentials are separately encrypted and private to room owner; u
   }), /otro proveedor/);
 });
 
-test('relay health uses shared infrastructure without sharing access tokens', async () => {
+test('explicit room relay health and isolation without global fallback', async () => {
   const calls = [];
   const relay = createRelayClient({
-    DORADO_RELAY_URL: 'https://relay.example.test',
-    DORADO_RELAY_SECRET: 'server-side-only',
+    url: 'https://relay.example.com',
+    secret: 'server-side-only-key',
   }, async (url, options) => {
     calls.push({ url: url.href, method: options.method });
     return { ok: true, json: async () => ({ ok: true }) };
   });
   assert.deepEqual(await relay.health(), { configured: true, ready: true });
-  assert.deepEqual(calls, [{ url: 'https://relay.example.test/health', method: 'GET' }]);
-  const disabled = createRelayClient({}, async () => { throw Error('should not request'); });
+  assert.deepEqual(calls, [{ url: 'https://relay.example.com/health', method: 'GET' }]);
+  const disabled = createRelayClient(null, async () => { throw Error('should not request'); });
   assert.deepEqual(await disabled.health(), { configured: false, ready: false });
 });

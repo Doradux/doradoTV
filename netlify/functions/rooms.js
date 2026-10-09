@@ -5,7 +5,7 @@ import { mailReady, sendAccountMail, reportReady, sendContentNotice } from '../l
 import { googleClientId, beginGoogleSignIn, consumeGoogleSignIn, verifyGoogleAccessToken, GOOGLE_COOKIE, verifyGoogleCredential } from '../lib/room-google.js';
 
 const json = (value, status = 200, headers = {}) => Response.json(value, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', ...headers } });
-export function createRoomsHandler({ getStore = roomStore, env = process.env, sendMail = (email, token, kind) => sendAccountMail(email, token, kind, env), captcha = checkCaptcha, googleVerify = verifyGoogleCredential, detect, clock, sendNotice = sendContentNotice } = {}) {
+export function createRoomsHandler({ getStore = roomStore, env = process.env, sendMail = (email, token, kind) => sendAccountMail(email, token, kind, env), captcha = checkCaptcha, googleVerify = verifyGoogleCredential, detect, clock, verifyRelay, sendNotice = sendContentNotice } = {}) {
   return async (request, context = {}) => {
     try {
       const url = new URL(request.url), action = url.searchParams.get('action');
@@ -17,7 +17,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       }
       masterKey(env);
       const store = getStore();
-      const service = new RoomsService(store, { env, sendMail, detect, clock });
+      const service = new RoomsService(store, { env, sendMail, detect, clock, verifyRelay });
       const who = await identity(store, request, clock?.());
       if (request.method === 'GET') {
         const slug = normalizeRoom(url.searchParams.get('room'));
@@ -117,6 +117,10 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
         return response;
       }
       if (action === 'forget-visited') return json(await service.forgetVisited(who.account, slug));
+      if (action === 'verify-relay') {
+        await rateLimit(store, 'verify-relay:' + (who.account?.id || ip), 10, 900, clock?.());
+        return json(await service.testRelay(who, input.relay, slug || null));
+      }
       if (action === 'verify-provider') {
         await rateLimit(store, 'verify-provider:' + (who.account?.id || ip), 12, 900, clock?.());
         return json(await service.testProvider(who, input.provider, slug || null));
