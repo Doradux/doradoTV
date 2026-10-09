@@ -10,3 +10,9 @@ test('relay Docker image rebuilds the native WebTorrent binding and verifies it 
   assert.match(dockerfile, /new WebTorrent\(/);
   assert.match(dockerfile, /Native torrent module OK/);
 });
+
+test('relay health exposes a native-binding installation diagnostic', () => {
+  const server = readFileSync(new URL('../relay/server.js', import.meta.url), 'utf8');
+  assert.match(server, /nativeInstalled: existsSync\(new URL\(/);
+  assert.match(server, /node-datachannel\/build\/Release\/node_datachannel\.node/);
+});
