@@ -65,6 +65,29 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
         return json({ ok: true });
       }
       const addons = (await read(store, stateKey(slug)))?.addons || [];
+      if (action === 'search') {
+        const type = input.type, query = typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '';
+        if (!['movie', 'series'].includes(type) || query.length < 2) throw new RoomError('Introduce al menos dos caracteres y un tipo válido.', 400);
+        const searchable = addons.flatMap((addon) => addon.manifest.catalogs
+          .filter((catalog) => catalog.type === type && catalog.search && !catalog.required && supports(addon.manifest, 'catalog', type))
+          .map((catalog) => ({ addon, catalog }))).slice(0, 16);
+        const results = await Promise.all(searchable.map(async ({ addon, catalog }) => {
+          try {
+            const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), 'catalog', type, catalog.id, { search: query }));
+            return { metas: (Array.isArray(data.metas) ? data.metas : []).slice(0, 60).map(metaPreview).filter(Boolean)
+              .map((meta) => ({ ...meta, addonId: addon.id })), warning: null };
+          } catch (error) {
+            return { metas: [], warning: { addon: addon.manifest.name, reason: error instanceof RoomError ? error.message : 'No se pudo conectar con el addon.' } };
+          }
+        }));
+        const distinct = new Map();
+        for (const { metas } of results) for (const meta of metas) {
+          const key = meta.type + ':' + meta.id;
+          if (!distinct.has(key) || (!distinct.get(key).poster && meta.poster)) distinct.set(key, meta);
+        }
+        return json({ metas: [...distinct.values()].slice(0, 100),
+          engines: searchable.length, warnings: results.flatMap(({ warning }) => warning ? [warning] : []) });
+      }
       if (action === 'catalog') {
         const addon = selectAddon(addons, itemIdentifier(input.addonId, 100));
         const type = input.type, id = itemIdentifier(input.catalogId);

@@ -82,3 +82,39 @@
 .sa-playback-options label{display:flex;align-items:center}
 #sa-volume{width:80px}
 @media(max-width:570px){.sa-main{padding:1rem}.sa-episode-list{grid-template-columns:1fr}.sa-playback-controls{padding:.5rem}.sa-playback-row{gap:.4rem}.sa-playback-controls button{min-width:2rem}#sa-volume{width:65px}.sa-seasons select{max-width:none}}
+
+/* Inline cinema view and two-way room navigation */
+.watch-layout[hidden],.sa-cinema-page[hidden],.sa-overlay[hidden],.sa-main [hidden],#sa-play-selected[hidden],#sa-source-help[hidden] { display:none!important; }
+.media-tabs{display:flex;gap:8px;align-items:center;margin:-7px 0 23px;flex-wrap:wrap}
+.media-tab{display:inline-flex;align-items:center;gap:9px;justify-content:center;padding:11px 17px;border:1px solid #ffffff18;border-radius:12px;color:#a8aeb9;background:#131820;font-size:13px;font-weight:650}
+.media-tab:hover{border-color:#edc57677;color:#f6edd8}
+.media-tab[aria-pressed="true"]{background:linear-gradient(120deg,#e2b557,#f5d38a);color:#15100a;border-color:#f1d18b;box-shadow:0 7px 26px #e9ba4523}
+.sa-cinema-page{min-width:0;width:100%;padding-bottom:30px}
+.sa-cinema-page .sa-dialog{width:100%;max-width:none;height:auto;min-height:550px;overflow:visible;border-color:#ffffff13;background:#0e121a;box-shadow:none}
+.sa-cinema-page .sa-layout{display:block;min-height:0;flex:auto}
+.sa-cinema-page .sa-main{padding:clamp(15px,2.5vw,34px);overflow:visible}
+.sa-cinema-page .sa-heading{border-radius:20px 20px 0 0}
+.sa-manage-dialog{width:min(540px,100%);max-height:90dvh;overflow:auto;border:1px solid #404958;border-radius:19px;background:#0f1624;color:#e8ecf2;box-shadow:0 32px 100px #000c}
+.sa-manage-dialog .sa-sidebar{border:none;max-height:none;padding:22px}
+.sa-manage-dialog #sa-manage-status{padding:0 22px 15px;margin:0}
+.sa-play-selected{width:100%;max-width:440px;margin:8px 0 14px}
+.sa-source-meta{margin-top:6px!important;white-space:normal!important;color:#dac184!important}
+.sa-source[aria-pressed="true"]{border-color:#e9be68;background:#e5b96218;box-shadow:0 0 0 1px #e8bd6035}
+.sa-source span{width:100%}
+.sa-source{align-items:start}
+.sa-source small{overflow-wrap:anywhere;white-space:normal}
+.sa-toolbar{grid-template-columns:minmax(175px,.8fr) minmax(220px,1.5fr)}
+.sa-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:18px}
+.sa-content-switch{display:flex;gap:8px;margin-bottom:16px}
+.sa-content-switch button{padding:9px 15px;color:#b8bdc8;background:#1a2230;border:1px solid #3e4756;border-radius:9px;font-size:13px}
+.sa-content-switch button[aria-pressed="true"]{background:#eac272;color:#15100b;border-color:#f2d08c}
+@media(max-width:750px){
+ .sa-cinema-page .sa-dialog{border-radius:15px;min-height:420px}
+ .sa-cinema-page .sa-layout{display:block;overflow:visible}
+ .sa-cinema-page .sa-main{padding:17px}
+ .sa-manage-dialog .sa-sidebar{max-height:none}
+ .sa-cinema-page .sa-toolbar{grid-template-columns:1fr}
+ .media-tabs{margin:0 0 18px}
+ .media-tab{flex:1;padding:11px 7px;font-size:12px}
+ .sa-grid{grid-template-columns:repeat(auto-fill,minmax(112px,1fr))}
+}
