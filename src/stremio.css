@@ -195,3 +195,11 @@
 @media (prefers-reduced-motion: reduce) {
   .media-tab { transition: none; }
 }
+
+.sa-addon-actions { display:flex; align-items:center; gap:7px; flex-shrink:0; }
+.sa-addon-actions [data-browser-toggle] { border:1px solid #d9b97244; color:#e7c67d; background:#e7c67d10; border-radius:8px; padding:7px 9px; font-size:11px; white-space:nowrap; }
+.sa-addon-actions [data-browser-toggle]:hover { background:#e7c67d24; }
+.sa-addon-actions [data-browser-toggle]:disabled { opacity:.5; }
+.sa-browser-optin { display:flex; align-items:flex-start; gap:9px; line-height:1.6; color:#c7bba6; font-size:11px; }
+.sa-browser-optin input { margin-top:3px; flex-shrink:0; accent-color:#eabb6d; }
+@media (max-width:600px) { .sa-addon { flex-wrap:wrap; } .sa-addon-actions { width:100%; justify-content:flex-end; } }

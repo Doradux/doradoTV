@@ -1,6 +1,7 @@
 import { Film, Puzzle, Search, Play, ArrowLeft, Trash2, Plus, X } from 'lucide';
 import { iconSvg, escapeHtml } from './ui.js';
 import { seasonGroups } from './vod-utils.js';
+import { browserManifestUrl, browserResourceUrl, browserAddonJson, browserSupports } from './stremio-browser.js';
 import './stremio.css';
 const e = escapeHtml;
 const cover = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="sa-no-poster">${iconSvg(Film)}</span>`;
@@ -47,6 +48,7 @@ export function mountRoomAddons(app, session, { player }) {
       <form id="sa-install" class="sa-install" hidden>
         <label for="sa-url">Instalar addon</label>
         <input id="sa-url" type="text" inputmode="url" placeholder="https://.../manifest.json o stremio://..." maxlength="1500" required>
+        <label class="sa-browser-optin"><input id="sa-browser-install" type="checkbox"><span>Addon público: consultar desde el navegador (CORS). La URL completa será visible para todos los miembros. No usar con claves privadas.</span></label>
         <button type="submit" class="sa-primary">${iconSvg(Plus, 'h-4 w-4')} Instalar</button>
         <small>Utiliza únicamente fuentes autorizadas.</small>
       </form></div><p id="sa-manage-status" class="sa-message" role="status"></p></section>`;
@@ -62,13 +64,19 @@ export function mountRoomAddons(app, session, { player }) {
   function renderAddons() {
     $('#sa-install').hidden = !state.owner;
     $('#sa-addons').innerHTML = state.addons.length ? state.addons.map((a) =>
-      `<div class="sa-addon"><div><strong>${e(a.manifest.name)}</strong><small>${e(a.manifest.description || '')}</small></div>
-      ${state.owner ? `<button type="button" data-remove="${e(a.id)}" aria-label="Eliminar ${e(a.manifest.name)}">${iconSvg(Trash2, 'h-4 w-4')}</button>` : ''}</div>`
+      `<div class="sa-addon"><div><strong>${e(a.manifest.name)}</strong><small>${e(a.manifest.description || '')}</small><small>${a.browserUrl ? 'Público · navegador (CORS)' : 'Privado · servidor'}</small></div>
+      ${state.owner ? `<div class="sa-addon-actions"><button type="button" data-browser-toggle="${e(a.id)}" title="Cambiar modo de consulta">${a.browserUrl ? 'Hacer privado' : 'Activar navegador'}</button><button type="button" data-remove="${e(a.id)}" aria-label="Eliminar ${e(a.manifest.name)}">${iconSvg(Trash2, 'h-4 w-4')}</button></div>` : ''}</div>`
     ).join('') : '<p class="sa-muted">No hay addons instalados.</p>';
   }
   async function refresh() {
     const response = await api(room, 'list');
     state.addons = response.addons; state.owner = response.owner; state.loaded = true; renderAddons();
+  }
+  const publicAddons = () => state.addons.filter((addon) => !!addon.browserUrl);
+  async function fetchPublicResource(addon, resource, type, id, extra = {}) {
+    const url = browserResourceUrl(addon.browserUrl, resource, type, id, extra);
+    const payload = await browserAddonJson(url);
+    return api(room, 'browser-results', { addonId: addon.id, resource, type, id, payload });
   }
   async function browse() {
     const token = ++state.searchToken, query = state.query.trim();
@@ -80,11 +88,26 @@ export function mountRoomAddons(app, session, { player }) {
     say('Buscando…');
     $('#sa-grid').classList.add('is-loading');
     try {
-      const data = await api(room, 'search', { type: 'all', search: query });
+      const browserSearches = publicAddons().flatMap((addon) =>
+        addon.manifest.catalogs.filter((catalog) => catalog.search && !catalog.required &&
+          browserSupports(addon.manifest, 'catalog', catalog.type)).slice(0, 8)
+          .map((catalog) => fetchPublicResource(addon, 'catalog', catalog.type, catalog.id, { search: query })));
+      const results = await Promise.allSettled([
+        api(room, 'search', { type: 'all', search: query }), ...browserSearches,
+      ]);
       if (token !== state.searchToken || !visible()) return;
-      state.metas = data.metas;
+      const distinct = new Map();
+      for (const result of results) if (result.status === 'fulfilled')
+        for (const meta of result.value.metas || []) {
+          const key = meta.type + ':' + meta.id;
+          if (!distinct.has(key) || (!distinct.get(key).poster && meta.poster)) distinct.set(key, meta);
+        }
+      state.metas = [...distinct.values()].slice(0, 100);
       $('#sa-grid').innerHTML = cards(state.metas) || '<p class="sa-muted">No hay resultados.</p>';
-      say(state.metas.length ? '' : 'No se encontraron títulos.');
+      const errors = results.filter((result) => result.status === 'rejected');
+      say(state.metas.length ? '' : errors.length
+        ? 'Algunos addons no están disponibles. Comprueba CORS o prueba otra búsqueda.'
+        : 'No se encontraron títulos.');
     } catch (error) {
       if (token === state.searchToken) say(error.message);
     } finally { if (token === state.searchToken) $('#sa-grid').classList.remove('is-loading'); }
@@ -131,8 +154,18 @@ export function mountRoomAddons(app, session, { player }) {
     $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${cover(preview)}<div><h2>${e(preview.name)}</h2></div></div>`;
     $('#sa-episodes').replaceChildren(); $('#sa-streams').replaceChildren(); say('Cargando…', true);
     let info = preview;
-    try { info = (await api(room, 'meta', { addonId: preview.addonId, type: preview.type, id: preview.id })).meta || preview; }
-    catch { /* Partial metadata is still useful. */ }
+    const selectedAddon = publicAddons().find((addon) => addon.id === preview.addonId);
+    try {
+      info = (selectedAddon
+        ? await fetchPublicResource(selectedAddon, 'meta', preview.type, preview.id)
+        : await api(room, 'meta', { addonId: preview.addonId, type: preview.type, id: preview.id })).meta || preview;
+    } catch { /* The original catalog preview is still useful. */ }
+    if (preview.type === 'series' && !info.videos?.length) {
+      try {
+        const fallback = await api(room, 'meta', { addonId: preview.addonId, type: preview.type, id: preview.id });
+        info = fallback.meta || info;
+      } catch { /* A series without episodes remains browsable but not playable. */ }
+    }
     if (token !== state.detailToken || !visible()) return;
     $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${cover(info)}<div><h2>${e(info.name || preview.name)}</h2>
       <small>${e(info.releaseInfo || '')}</small><p>${e(info.description || '')}</p></div></div>`;
@@ -148,16 +181,23 @@ export function mountRoomAddons(app, session, { player }) {
     const token = ++state.streamToken;
     $('#sa-streams').replaceChildren(); say('Buscando fuentes…', true);
     try {
-      const response = await api(room, 'streams', { type: state.current.type, id });
+      const type = state.current.type;
+      const browserStreams = publicAddons().filter((addon) => browserSupports(addon.manifest, 'stream', type, id))
+        .map((addon) => fetchPublicResource(addon, 'stream', type, id));
+      const results = await Promise.allSettled([
+        api(room, 'streams', { type, id }), ...browserStreams,
+      ]);
       if (token !== state.streamToken || !visible()) return;
-      state.streams = response.streams.sort((a, b) => (b.seeders ?? -1) - (a.seeders ?? -1));
+      state.streams = results.flatMap((result) =>
+        result.status === 'fulfilled' ? result.value.streams || [] : [])
+        .sort((a, b) => (b.seeders ?? -1) - (a.seeders ?? -1));
       $('#sa-streams').innerHTML = state.streams.map((s, i) =>
         `<button class="sa-source" type="button" data-source="${i}" style="--card-index:${Math.min(i, 24)}">
           ${iconSvg(Play, 'h-4 w-4')}<span><strong>${e(s.name)}</strong>
           <small>${e(s.title || (s.kind === 'torrent' ? 'Torrent' : 'Vídeo'))}</small>
           ${s.seeders == null ? '' : `<small>${s.seeders.toLocaleString('es')} seeders</small>`}</span></button>`).join('') ||
           '<p class="sa-muted">No hay fuentes disponibles.</p>';
-      say(!state.streams.length && response.warnings?.length ? 'No se han podido cargar las fuentes.' : '', true);
+      say(!state.streams.length && results.some((result) => result.status === 'rejected' || result.value?.warnings?.length) ? 'No se pudieron consultar algunas fuentes. Comprueba CORS o prueba otra.' : '', true);
     } catch (error) { if (token === state.streamToken) say(error.message, true); }
   }
   async function playSource(index) {
@@ -204,6 +244,21 @@ export function mountRoomAddons(app, session, { player }) {
   };
   manage.addEventListener('click', async (event) => {
     if (event.target === manage || event.target.closest('[data-manage-close]')) return closeManage();
+    const toggle = event.target.closest('[data-browser-toggle]');
+    if (toggle && state.owner) {
+      const addon = state.addons.find((a) => a.id === toggle.dataset.browserToggle);
+      if (!addon) return;
+      const turnOn = !addon.browserUrl;
+      if (turnOn && !confirm('La URL COMPLETA de este addon será visible para cualquier miembro de la sala y las consultas saldrán desde su navegador. No actives este modo con URLs que contengan claves o tokens privados. ¿Confirmas?')) return;
+      toggle.disabled = true;
+      try {
+        await api(room, 'browser-mode', { addonId: addon.id, browserPublic: turnOn, confirmPublicUrl: turnOn });
+        await refresh();
+        $('#sa-manage-status').textContent = turnOn ? 'Modo navegador activado para este addon público.' : 'Modo privado restaurado.';
+      } catch (err) { $('#sa-manage-status').textContent = err.message; }
+      finally { toggle.disabled = false; }
+      return;
+    }
     const button = event.target.closest('[data-remove]');
     if (button && state.owner && confirm('¿Eliminar este addon?')) {
       try {
@@ -215,11 +270,16 @@ export function mountRoomAddons(app, session, { player }) {
   manage.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeManage(); });
   $('#sa-install').onsubmit = async (event) => {
     event.preventDefault();
-    const button = event.currentTarget.querySelector('button'), input = $('#sa-url');
+    const button = event.currentTarget.querySelector('button[type="submit"]'), input = $('#sa-url');
+    const publicBrowser = $('#sa-browser-install').checked;
     button.disabled = true; $('#sa-manage-status').textContent = 'Instalando…';
     try {
-      await api(room, 'install', { url: input.value.trim().replace(/^stremio:\/\//i, 'https://') });
-      input.value = ''; await refresh(); $('#sa-manage-status').textContent = 'Addon instalado.';
+      const url = browserManifestUrl(input.value);
+      const publicManifest = publicBrowser ? await browserAddonJson(url) : undefined;
+      await api(room, 'install', { url, ...(publicBrowser ?
+        { browserPublic: true, confirmPublicUrl: true, browserManifest: publicManifest } : {}) });
+      input.value = ''; $('#sa-browser-install').checked = false;
+      await refresh(); $('#sa-manage-status').textContent = 'Addon instalado.';
     } catch (err) { $('#sa-manage-status').textContent = err.message; }
     finally { button.disabled = false; }
   };
