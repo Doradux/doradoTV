@@ -45,7 +45,11 @@ DORADO_RELAY_SECRET=<el mismo secreto>
 
 Cada URL HTTP y cada redirección se resuelven antes de abrirse. Se rechazan loopback, redes privadas y link-local. FFmpeg recibe una IP pública fijada, conserva el `Host` original y usa `-max_redirects 0`.
 
-Varias personas viendo el mismo canal comparten una sola entrada FFmpeg. Si no queda ningún espectador, la emisión se cierra automáticamente.
+**Este relay también distribuye emisiones compartidas:** cuando varias personas reproducen exactamente la misma URL HTTP, el servidor abre una sola conexión al origen y una sola entrada FFmpeg, y distribuye el HLS resultante a los espectadores mediante sesiones individuales. Diez espectadores de esa misma señal HTTP pueden compartir una emisión de origen, en lugar de crear diez conexiones al proveedor.
+
+La agrupación utiliza un hash de la URL de origen completa. Dos URL distintas (por ejemplo, credenciales de proveedor o tokens diferentes) se tratan como emisiones independientes, aunque muestren el mismo canal. Los canales HTTPS que se reproducen directamente desde el navegador no atraviesan este relay y no tienen esa deduplicación. No se puede garantizar que el proveedor contabilice siempre una única conexión: depende de sus reglas, redirecciones y sesiones.
+
+Si no queda ningún espectador, la emisión se cierra automáticamente. DORADO_MAX_CONNECTIONS limita las emisiones de origen simultáneas del relay, no el número total de espectadores de una misma emisión.
 
 ## Autohospedado opcional
 

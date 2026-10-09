@@ -42,8 +42,64 @@
 .sa-episode span,.sa-source span{min-width:0;display:block}
 .sa-episode strong,.sa-source strong{display:block;font-size:12px;overflow-wrap:anywhere}
 .sa-episode small,.sa-source small{display:block;color:#a9b3c3;font-size:11px;line-height:1.4;margin-top:4px;overflow-wrap:anywhere}
-.sa-streams{display:grid;gap:9px}
-.sa-source>svg{color:#efc67c;flex:none}
+.sa-streams{
+  display:flex;
+  flex-wrap:wrap;
+  align-content:flex-start;
+  align-items:stretch;
+  gap:10px;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  box-sizing:border-box;
+}
+.sa-streams>.sa-muted{flex:1 1 100%;min-width:0}
+/* Sources wrap into bounded cards when cinema is below the video, and remain
+   a single compact column in the normal-width right sidebar. */
+#sa-cinema-page,.sa-browser-stage,#sa-detail,#sa-streams{
+  min-width:0;
+  max-width:100%;
+  box-sizing:border-box;
+}
+.sa-source{
+  flex:1 1 230px;
+  width:auto;
+  min-width:0;
+  max-width:min(100%,340px);
+  box-sizing:border-box;
+  align-items:flex-start;
+  overflow:hidden;
+}
+.sa-source>svg{color:#efc67c;flex:0 0 auto}
+.sa-source>span{
+  flex:1 1 0;
+  min-width:0;
+  max-width:100%;
+  overflow-wrap:anywhere;
+}
+.sa-source strong,.sa-source small{
+  max-width:100%;
+  white-space:normal;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+@media(min-width:1024px){
+  /* Fixed-height desktop sidebars scroll internally instead of spilling out. */
+  #watch-layout.media-mode-cinema:not(.is-theater) .channel-panel{
+    overflow-x:hidden;
+    overflow-y:auto;
+  }
+  #watch-layout.media-mode-cinema:not(.is-theater) .media-tabs{
+    position:sticky;
+    top:0;
+    z-index:5;
+  }
+}
+/* In theater mode the panel sits below the player and expands with the cards. */
+#watch-layout.media-mode-cinema.is-theater .channel-panel{
+  max-height:none;
+  overflow:visible;
+}
 .sa-overlay{position:fixed;inset:0;z-index:95;display:flex;align-items:center;justify-content:center;padding:20px;background:#000b}
 .sa-manage-dialog{width:min(540px,100%);max-height:90dvh;overflow:auto;background:#101723;border:1px solid #ffffff2c;border-radius:19px;color:#f3f4f6;box-shadow:0 30px 90px #000a}
 .sa-heading{padding:18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #ffffff20}
