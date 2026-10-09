@@ -213,6 +213,16 @@ export class TorrentRelay {
     return { ...bounds, mode: 'direct', length: swarm.file.length, name: swarm.file.name,
       stream: () => swarm.file.createReadStream({ start: bounds.start, end: bounds.end }) };
   }
+  rawMedia(id, token, range) {
+    const viewer = this.auth(id, undefined, token);
+    const swarm = this.swarms.get(viewer.hash);
+    if (!swarm || swarm.state !== 'ready' || !swarm.file)
+      throw new TorrentFault('El torrent todavía se está preparando.', 503);
+    if (swarm.rolling) throw new TorrentFault('La caché de este torrent no admite saltos independientes.', 409);
+    const bounds = rangeForTorrent(range, swarm.file.length);
+    return { ...bounds, length: swarm.file.length,
+      stream: () => swarm.file.createReadStream({ start: bounds.start, end: bounds.end }) };
+  }
   acquireRemux() {
     // Remuxing does not duplicate a torrent download, but each HTTP viewer uses
     // one FFmpeg process. Keep it tightly bounded on small Northflank machines.

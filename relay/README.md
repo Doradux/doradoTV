@@ -98,3 +98,31 @@ pueden necesitar un método distinto. El relay valida las IP públicas en DNS y 
 redirección HTTPS, impide acceder a direcciones privadas, usa tokens de sesión temporales
 y permite como máximo **dos** procesos de remux simultáneos (sumando BitTorrent y HTTPS).
 Al terminar se revoca la sesión y se cierra la conexión de descarga remota.
+
+## Streaming VOD multiusuario bajo demanda (HLS)
+
+DoradoTV permite reproducir torrents BitTorrent o enlaces HTTPS directos (incluido TorBox)
+con reproducción independiente por espectador. No espera a descargar el archivo completo:
+FFprobe obtiene la duración y FFmpeg pide por HTTP Range las porciones de archivo
+necesarias para cada segmento HLS de 8 segundos. Las peticiones de segmentos
+coincidentes comparten un único proceso FFmpeg y una caché común en
+`DORADO_RELAY_DIR/vod-hls`, limitada a 12 GiB por defecto.
+
+- El vídeo de salida se convierte a H.264 (hasta 720p) y el audio a AAC
+  estéreo cuando se activa el modo compatible; el resto de pistas se omiten.
+- Los espectadores tienen sesiones y tokens independientes. El manifiesto VOD
+  declara la duración completa y permite buscar otro minuto sin sincronizarlos.
+- Las fuentes HTTPS solo pueden solicitarse con un permiso firmado por
+  Netlify. El relay valida los DNS, IPs y redirecciones públicas. FFmpeg usa
+  un proxy HTTP interno protegido por un token y restringido a loopback.
+- El proceso admite hasta dos codificaciones simultáneas, comparte segmentos
+  y conserva un número limitado de archivos TS. En caso de cierre se borran
+  los segmentos parciales. La reproducción M3U en directo no cambia.
+- Para admitir torrents de más de 8 GiB con saltos independientes, la
+  configuración del servidor Ubuntu debe ampliar
+  `DORADO_TORRENT_MAX_BYTES` (hasta 24 GiB admitidos en el runtime).
+  El almacén de piezas tiene que ser seekable; las fuentes que exceden
+  ese límite no admiten aún reproducción con acceso aleatorio.
+- Sigue siendo necesario que TorBox proporcione enlaces HTTPS con soporte
+  HTTP Range, o que exista al menos un seeder para los torrents. No
+  depende de ningún servicio externo de transcodificación.

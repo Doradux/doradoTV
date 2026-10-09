@@ -9,6 +9,7 @@ import { RelayRegistry } from './registry.js';
 import { TorrentRelay, TorrentFault } from './torrent-service.js';
 import { remuxVideo } from './remux.js';
 import { DirectAudioSessions } from './direct-audio.js';
+import { VodHls } from './vod-hls.js';
 
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
@@ -125,6 +126,9 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     directory, maxBytes: torrentMaxBytes, maxActive: torrentMaxActive,
   });
   const directAudio = new DirectAudioSessions();
+  const vod = new VodHls({ directory, torrentRelay: torrents, ffmpeg,
+    maxConcurrent: Number(process.env.DORADO_VOD_TRANSCODES) || 2,
+    maxCacheBytes: Number(process.env.DORADO_VOD_CACHE_BYTES) || 12 * 1024 ** 3 });
   const now = clock;
   let configuredOrigin = null;
   if (publicUrl) {
@@ -134,6 +138,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     configuredOrigin = publicBase.origin;
   }
   const mediaOrigin = configuredOrigin || 'http://relay.invalid';
+  vod.publicUrl = mediaOrigin;
   const allowedOrigin = new URL(appOrigin).origin;
   const requestOrigin = (request) => {
     if (configuredOrigin) return configuredOrigin;
@@ -222,6 +227,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   function tick() {
     torrents.tick();
     directAudio.sweep();
+    vod.sweep();
     registry.transaction((state) => {
       state.worker_seen = now();
       for (const [id, session] of Object.entries(state.sessions)) if (now() - session.last_seen > SESSION_TTL) delete state.sessions[id];
@@ -297,9 +303,56 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, mediaOrigin);
     const cors = getCors(request);
-    if (request.method === 'OPTIONS' && (url.pathname.startsWith('/media/') || url.pathname.startsWith('/torrent-media/') || url.pathname.startsWith('/direct-audio/'))) {
+    if (request.method === 'OPTIONS' && (url.pathname.startsWith('/media/') || url.pathname.startsWith('/torrent-media/') || url.pathname.startsWith('/direct-audio/') || url.pathname.startsWith('/vod/'))) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       response.writeHead(204, cors); response.end(); return;
+    }
+    // Internal-only source endpoint. FFmpeg/FFprobe can seek using HTTP Range
+    // without exposing the TorBox URL or accepting arbitrary public proxies.
+    const inputMatch = url.pathname.match(/^\/vod-input\/([a-f0-9]{64})$/);
+    if (inputMatch && request.method === 'GET') {
+      const remoteIp = request.socket.remoteAddress || '';
+      if (!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remoteIp)) {
+        json(response, 403, { error: 'Acceso local exclusivamente.' }); return;
+      }
+      const source = vod.sources.get(inputMatch[1]);
+      if (!source || !sameSecret(url.searchParams.get('auth'), source.secret)) {
+        json(response, 403, { error: 'Fuente no autorizada.' }); return;
+      }
+      try { await vod.proxyInput(source, request, response); }
+      catch (error) {
+        if (!response.headersSent) json(response, 503, { error: 'No se pudo obtener el rango solicitado.' });
+        else response.destroy();
+      }
+      return;
+    }
+    const vodMedia = url.pathname.match(/^\/vod\/([0-9a-f-]{36})\/(index\.m3u8|segment_([0-9]+)\.ts)$/);
+    if (vodMedia && (request.method === 'GET' || request.method === 'HEAD')) {
+      if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
+      const id = vodMedia[1], token = url.searchParams.get('token');
+      try {
+        if (vodMedia[2] === 'index.m3u8') {
+          const playlist = vod.playlist(id, token);
+          response.writeHead(200, { ...cors, 'Content-Type': 'application/vnd.apple.mpegurl',
+            'Content-Length': String(Buffer.byteLength(playlist)), 'Cache-Control': 'private, no-store' });
+          response.end(request.method === 'HEAD' ? undefined : playlist);
+        } else {
+          const file = await vod.segment(id, token, Number(vodMedia[3]));
+          const size = statSync(file).size;
+          response.writeHead(200, { ...cors, 'Content-Type': 'video/mp2t',
+            'Content-Length': String(size), 'Cache-Control': 'private, no-store' });
+          if (request.method === 'HEAD') response.end();
+          else {
+            const stream = createReadStream(file);
+            stream.on('error', () => response.destroy());
+            stream.pipe(response);
+          }
+        }
+      } catch (error) {
+        if (!response.headersSent) json(response, 503, { error: 'No se pudo generar el segmento VOD.' }, cors);
+        else response.destroy();
+      }
+      return;
     }
     const directMedia = url.pathname.match(/^\/direct-audio\/([0-9a-f-]{36})$/);
     if (directMedia && (request.method === 'GET' || request.method === 'HEAD')) {
@@ -434,6 +487,30 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
         }));
         json(response, 200, { max_connections: maxConnections, active_count: active.length, local_count: active.length, viewer_count: Object.keys(state.sessions).length, connections }); return;
       }
+      if (request.method === 'POST' && url.pathname === '/vod/start') {
+        const input = await body(request);
+        const userId = normalizeUserId(input.user_id);
+        if (!userId) throw Error('Usuario VOD inválido.');
+        json(response, 200, await vod.start({
+          url: input.url, torrentHash: input.info_hash, fileIdx: input.file_idx,
+          userId, origin: requestOrigin(request),
+        }));
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/vod/status') {
+        const input = await body(request);
+        const userId = normalizeUserId(input.user_id);
+        if (!userId || !UUID.test(input.session_id || '')) throw Error('Sesión VOD inválida.');
+        json(response, 200, vod.status(input.session_id, userId, requestOrigin(request)));
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/vod/stop') {
+        const input = await body(request);
+        const userId = normalizeUserId(input.user_id);
+        if (!userId || !UUID.test(input.session_id || '')) throw Error('Sesión VOD inválida.');
+        json(response, 200, vod.stop(input.session_id, userId));
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/direct-audio/start') {
         const input = await body(request);
         json(response, 200, directAudio.start(input.url, normalizeUserId(input.user_id), requestOrigin(request)));
@@ -527,7 +604,8 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       { error: error.message });
     }
   });
-  return { server, registry, torrents, directAudio, tick, stop() { directAudio.shutdown(); torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
+  vod.port = () => server.address()?.port;
+  return { server, registry, torrents, directAudio, vod, tick, stop() { vod.shutdown(); directAudio.shutdown(); torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
@@ -544,7 +622,7 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     appOrigin: process.env.DORADO_APP_ORIGIN,
     maxConnections: Number(process.env.DORADO_MAX_CONNECTIONS || 3),
     ffmpeg: process.env.DORADO_FFMPEG || 'ffmpeg',
-    torrentMaxBytes: Math.min(8 * 1024 ** 3, Math.max(100 * 1024 ** 2, Number(process.env.DORADO_TORRENT_MAX_BYTES) || 700 * 1024 ** 2)),
+    torrentMaxBytes: Math.min(24 * 1024 ** 3, Math.max(100 * 1024 ** 2, Number(process.env.DORADO_TORRENT_MAX_BYTES) || 700 * 1024 ** 2)),
     torrentMaxActive: Math.min(3, Math.max(1, Number(process.env.DORADO_TORRENT_MAX_ACTIVE) || 1)),
   });
   const interval = setInterval(relay.tick, 1000);

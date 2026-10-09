@@ -31,7 +31,7 @@ export function validateDirectMediaUrl(value) {
 }
 
 export async function openDirectMedia(value, {
-  resolver = lookup, transport = httpsRequest, redirects = 0,
+  resolver = lookup, transport = httpsRequest, redirects = 0, range = null,
 } = {}) {
   const url = validateDirectMediaUrl(value);
   let records;
@@ -47,7 +47,7 @@ export async function openDirectMedia(value, {
           method: 'GET',
           timeout: 25000,
           headers: { Accept: 'video/*,application/octet-stream;q=0.9,*/*;q=0.2',
-            'User-Agent': 'DoradoTV-Media/1.0' },
+            'User-Agent': 'DoradoTV-Media/1.0', ...(range ? { Range: range } : {}) },
           lookup: (_hostname, options, callback) => callback(null,
             options?.all ? [pin] : pin.address, pin.family),
         }, (res) => {
@@ -70,18 +70,23 @@ export async function openDirectMedia(value, {
           if (Number.isFinite(length) && length > MAX_BYTES) {
             res.destroy(); reject(Error('El archivo supera el límite de 24 GiB.')); return;
           }
+          if (range && res.statusCode !== 206 && !/^bytes=0-?$/.test(range)) {
+            res.destroy(); reject(Error('La fuente no admite saltos de tiempo por HTTP Range.')); return;
+          }
           let total = 0;
           res.on('data', (chunk) => {
             total += chunk.length;
             if (total > MAX_BYTES) res.destroy(Error('Archivo demasiado grande.'));
           });
-          resolve({ stream: res, close: () => {res.destroy();req.destroy();} });
+          resolve({ stream: res, status: res.statusCode, length: Number.isFinite(length) ? length : null,
+            contentRange: res.headers['content-range'] || null,
+            close: () => {res.destroy();req.destroy();} });
         });
         req.on('timeout', () => req.destroy(Error('La fuente tardó demasiado en responder.')));
         req.on('error', reject);
         req.end();
       });
-      if (result.redirect) return openDirectMedia(result.redirect, { resolver, transport, redirects: redirects + 1 });
+      if (result.redirect) return openDirectMedia(result.redirect, { resolver, transport, redirects: redirects + 1, range });
       return result;
     } catch (error) { lastError = error; }
   }
