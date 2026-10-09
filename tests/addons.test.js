@@ -23,7 +23,8 @@ async function fixture() {
   await store.setJSON('room/sala-cine', { slug: 'sala-cine', title: 'Cine', ownerId: 'owner', version: 1, revision: 1 });
   await store.setJSON('room/otra-sala', { slug: 'otra-sala', title: 'Otro', ownerId: 'owner', version: 1, revision: 1 });
   const called = [];
-  const handler = createAddonsHandler({ getStore: () => store, env, clock: () => time, fetchJson: async (url) => {
+  const handler = createAddonsHandler({ getStore: () => store, env, clock: () => time,
+    verifyPublic: async (url) => url, fetchJson: async (url) => {
     called.push(url);
     if (url.endsWith('manifest.json')) return manifest;
     if (url.includes('/catalog/')) return { metas: [{ id: 'tt12345', name: 'Película libre', type: 'movie', poster: 'https://image.test/cover.jpg' }] };
@@ -140,4 +141,91 @@ test('addon fetch retries alternate public DNS address for upstream 5xx', async 
   });
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(selected, ['8.8.8.8', '1.1.1.1']);
+});
+
+test('owner explicitly opts in browser-public addons; private URLs stay sealed', async () => {
+  const f = await fixture();
+  const privateUrl = 'https://private.example.com/config-token-keep-secret/manifest.json';
+  const original = await f.call('install', 'owner', { url: privateUrl });
+  assert.equal(original.status, 201);
+  const privateId = original.data.addon.id;
+  assert.equal(original.data.addon.browserUrl, undefined);
+  const before = await f.call('list', 'guest');
+  assert.equal(before.data.addons[0].browserUrl, undefined);
+  assert(!JSON.stringify(before.data).includes('config-token-keep-secret'));
+  assert.equal((await f.call('browser-mode', 'guest', {
+    addonId: privateId, browserPublic: true, confirmPublicUrl: true,
+  })).status, 403);
+  assert.equal((await f.call('browser-mode', 'owner', {
+    addonId: privateId, browserPublic: true,
+  })).status, 400);
+  assert.equal((await f.call('browser-results', 'guest', {
+    addonId: privateId, resource: 'catalog', type: 'movie', id: 'test', payload: { metas: [] },
+  })).status, 403);
+  const publicUrl = 'https://public.example.com/sort=seeders%7Clanguage=spanish/manifest.json';
+  assert.equal((await f.call('install', 'owner', {
+    url: publicUrl, browserPublic: true, browserManifest: manifest,
+  })).status, 400);
+  assert.equal((await f.call('install', 'guest', {
+    url: publicUrl, browserPublic: true, confirmPublicUrl: true, browserManifest: manifest,
+  })).status, 403);
+  const installed = await f.call('install', 'owner', {
+    url: publicUrl, browserPublic: true, confirmPublicUrl: true, browserManifest: manifest,
+  });
+  assert.equal(installed.status, 201);
+  const publicId = installed.data.addon.id;
+  const listed = await f.call('list', 'guest');
+  assert.equal(listed.data.addons.find((a) => a.id === publicId).browserUrl, publicUrl);
+  assert(!JSON.stringify(listed.data).includes('config-token-keep-secret'));
+  const saved = await read(f.store, 'addons/sala-cine');
+  assert(!JSON.stringify(saved).includes('config-token-keep-secret'));
+  assert.equal(saved.addons.find((a) => a.id === publicId).browserUrl, publicUrl);
+  const switched = await f.call('browser-mode', 'owner', { addonId: publicId, browserPublic: false });
+  assert.equal(switched.status, 200);
+  assert.equal((await f.call('list', 'guest')).data.addons.find((a) => a.id === publicId).browserUrl, undefined);
+});
+
+test('browser results are validated and torrent tickets signed only for opted-in authorized rooms', async () => {
+  const f = await fixture();
+  const installed = await f.call('install', 'owner', {
+    url: 'https://public.example.com/manifest.json',
+    browserPublic: true, confirmPublicUrl: true, browserManifest: manifest,
+  });
+  const addonId = installed.data.addon.id;
+  const catalog = await f.call('browser-results', 'guest', {
+    addonId, resource: 'catalog', type: 'movie', id: 'test',
+    payload: { metas: [
+      { id: 'tt12345', type: 'movie', name: 'Public film', poster: 'javascript:alert(1)' },
+      { id: '', type: 'movie' },
+    ] },
+  });
+  assert.equal(catalog.status, 200);
+  assert.deepEqual(catalog.data.metas.map((m) => m.name), ['Public film']);
+  assert.equal(catalog.data.metas[0].poster, '');
+  assert.equal(catalog.data.metas[0].addonId, addonId);
+  const hash = 'f'.repeat(40);
+  const signed = await f.call('browser-results', 'guest', {
+    addonId, resource: 'stream', type: 'movie', id: 'tt12345',
+    payload: { streams: [{ infoHash: hash, fileIdx: 0, title: 'Torrent' },
+      { url: 'https://video.example.com/clip.mp4', title: 'Direct' }] },
+  });
+  assert.equal(signed.status, 200);
+  assert.equal(signed.data.streams[0].kind, 'torrent');
+  assert.equal(signed.data.streams[0].infoHash, hash);
+  assert.equal(signed.data.streams[0].ticket.version, 1);
+  assert.equal(signed.data.streams[1].supported, true);
+  assert.equal((await f.call('browser-results', 'guest', {
+    addonId, resource: 'stream', type: 'movie', id: 'unsupported',
+    payload: { streams: [] },
+  }, 'otra-sala')).status, 403);
+  assert.equal((await f.call('browser-results', 'guest', {
+    addonId, resource: 'invalid', type: 'movie', id: 'tt12345', payload: {},
+  })).status, 400);
+  const callsBefore = f.called.length;
+  const searched = await f.call('search', 'guest', { type: 'all', search: 'film' });
+  assert.equal(searched.status, 200);
+  assert.equal(searched.data.engines, 0, 'Browser-public addons must not hit Netlify upstream');
+  const streams = await f.call('streams', 'guest', { type: 'movie', id: 'tt12345' });
+  assert.deepEqual(streams.data.streams, []);
+  assert.equal(f.called.length, callsBefore);
 });

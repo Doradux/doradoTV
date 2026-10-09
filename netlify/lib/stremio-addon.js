@@ -28,6 +28,19 @@ export function manifestUrl(input) {
   return url.href;
 }
 
+// Validate the hostname without ever requesting private-network endpoints.
+// Browser-public manifests are supplied by the owner when Netlify is blocked,
+// but must still satisfy the same DNS/SSRF constraints as server-side addons.
+export async function validateAddonDestination(urlString, resolver = lookup) {
+  const url = manifestUrl(urlString);
+  let resolved;
+  try { resolved = await resolver(new URL(url).hostname, { all: true }); }
+  catch { throw new RoomError('No se pudo resolver el addon.', 502); }
+  if (!resolved?.length || resolved.some(({ address }) => !publicIp(address)))
+    throw new RoomError('El addon apunta a una red no permitida.', 403);
+  return url;
+}
+
 export async function safeJson(urlString, { resolver = lookup, transport = httpsRequest, redirects = 0 } = {}) {
   let url;
   try { url = new URL(urlString); } catch { throw new RoomError('Solicitud a addon inválida.'); }

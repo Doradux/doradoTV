@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { roomStore, RoomError, read, mutate } from '../lib/room-store.js';
 import { RoomsService, normalizeRoom } from '../lib/rooms-service.js';
 import { masterKey, identity, requireOrigin, boundedJson, rateLimit, seal, unseal, privateId } from '../lib/room-security.js';
-import { manifestUrl, safeJson, normalizeManifest, supports, resourceUrl, metaPreview, streamView, subtitleView } from '../lib/stremio-addon.js';
+import { manifestUrl, validateAddonDestination, safeJson, normalizeManifest, supports, resourceUrl, metaPreview, streamView, subtitleView } from '../lib/stremio-addon.js';
 
 const json = (body, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const validText = (value, max = 180) => typeof value === 'string' && value.length > 0 && value.length <= max;
 const stateKey = (slug) => `addons/${slug}`;
-const publicAddon = ({ id, manifest }) => ({ id, manifest });
+// Never expose private addon locations, including configured paths and tokens.
+// Browser opt-in deliberately makes the complete public configuration URL visible.
+const publicAddon = ({ id, manifest, browserPublic, browserUrl }) => ({ id, manifest,
+  ...(browserPublic && browserUrl ? { browserUrl } : {}) });
 const urlFor = (addon, slug, env) => unseal(addon.location, `addon:${slug}:${addon.id}`, env);
 const selectAddon = (addons, id) => {
   const addon = addons.find((a) => a.id === id);
@@ -19,18 +22,19 @@ const itemIdentifier = (v) => {
   return v;
 };
 
-export function createAddonsHandler({ getStore = roomStore, env = process.env, fetchJson = safeJson, clock = () => Math.floor(Date.now() / 1000) } = {}) {
+export function createAddonsHandler({ getStore = roomStore, env = process.env, fetchJson = safeJson,
+  verifyPublic = validateAddonDestination, clock = () => Math.floor(Date.now() / 1000) } = {}) {
   return async (request, context = {}) => {
     try {
       masterKey(env);
       const parsed = new URL(request.url), action = parsed.searchParams.get('action');
-      const input = request.method === 'POST' ? (requireOrigin(request), await boundedJson(request)) : {};
+      const input = request.method === 'POST' ? (requireOrigin(request), await boundedJson(request, 65536)) : {};
       if (!['GET', 'POST'].includes(request.method)) throw new RoomError('Método no permitido.', 405);
       const slug = normalizeRoom(input.room ?? parsed.searchParams.get('room'));
       const store = getStore();
       const who = await identity(store, request, clock());
       const service = new RoomsService(store, { env, clock });
-      const ownerOnly = ['install', 'remove'].includes(action);
+      const ownerOnly = ['install', 'remove', 'browser-mode'].includes(action);
       await service.access(slug, who, ownerOnly);
       const ip = context.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
       const actor = who.sessionId || ip;
@@ -43,10 +47,14 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
       if (action === 'install') {
         await rateLimit(store, `addon-install:${actor}`, 20, 3600, clock());
         const location = manifestUrl(input.url);
-        const manifest = normalizeManifest(await fetchJson(location));
+        const browserPublic = input.browserPublic === true;
+        if (browserPublic && !input.confirmPublicUrl) throw new RoomError('Confirma que la URL del addon será pública para la sala.', 400);
+        if (browserPublic) await verifyPublic(location);
+        const manifest = normalizeManifest(browserPublic ? input.browserManifest : await fetchJson(location));
         const id = randomUUID();
         const fingerprint = privateId(location, env);
-        const entry = { id, fingerprint, manifest, location: seal(location, `addon:${slug}:${id}`, env) };
+        const entry = { id, fingerprint, manifest, location: seal(location, `addon:${slug}:${id}`, env),
+          ...(browserPublic ? { browserPublic: true, browserUrl: location } : {}) };
         await mutate(store, stateKey(slug), (state) => {
           const addons = state?.addons || [];
           if (addons.length >= 8) throw new RoomError('Máximo de 8 addons por sala.', 409);
@@ -54,6 +62,20 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
           return { addons: [...addons, entry] };
         });
         return json({ addon: publicAddon(entry) }, 201);
+      }
+      if (action === 'browser-mode') {
+        const addonId = itemIdentifier(input.addonId, 100);
+        if (typeof input.browserPublic !== 'boolean') throw new RoomError('Modo inválido.', 400);
+        const old = selectAddon((await read(store, stateKey(slug)))?.addons || [], addonId);
+        const location = urlFor(old, slug, env);
+        if (input.browserPublic) {
+          if (input.confirmPublicUrl !== true) throw new RoomError('Confirma que la URL será visible para toda la sala.', 400);
+          await verifyPublic(location);
+        }
+        await mutate(store, stateKey(slug), (state) => ({ addons: (state?.addons || []).map((addon) =>
+          addon.id !== addonId ? addon : { ...addon,
+            browserPublic: input.browserPublic, browserUrl: input.browserPublic ? location : undefined }) }));
+        return json({ ok: true });
       }
       if (action === 'remove') {
         const addonId = itemIdentifier(input.addonId, 100);
@@ -65,11 +87,49 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
         return json({ ok: true });
       }
       const addons = (await read(store, stateKey(slug)))?.addons || [];
+      if (action === 'browser-results') {
+        // Browser-CORS responses are untrusted client input. Only opted-in public
+        // addons may use this path; normalize every field before returning it.
+        // Private addons never disclose their URL or accept browser-supplied data.
+        const addon = selectAddon(addons, itemIdentifier(input.addonId, 100));
+        if (!addon.browserPublic || !addon.browserUrl)
+          throw new RoomError('Este addon no permite consultas desde el navegador.', 403);
+        const resource = input.resource, type = input.type;
+        const id = itemIdentifier(input.id);
+        if (!['movie', 'series'].includes(type) || !['catalog', 'meta', 'stream', 'subtitles'].includes(resource)
+          || !supports(addon.manifest, resource, type, id))
+          throw new RoomError('Recurso no disponible en este addon.', 400);
+        const payload = input.payload;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+          throw new RoomError('Datos del addon inválidos.', 400);
+        if (resource === 'catalog') {
+          const catalog = addon.manifest.catalogs.find((c) => c.type === type && c.id === id);
+          if (!catalog || catalog.required) throw new RoomError('Catálogo no disponible.', 400);
+          return json({ metas: (Array.isArray(payload.metas) ? payload.metas : [])
+            .slice(0, 60).map(metaPreview).filter(Boolean).map((meta) => ({ ...meta, addonId: addon.id })) });
+        }
+        if (resource === 'meta') {
+          const meta = metaPreview(payload.meta);
+          if (!meta || meta.id !== id || meta.type !== type) throw new RoomError('Metadatos no válidos.', 400);
+          return json({ meta });
+        }
+        if (resource === 'subtitles')
+          return json({ subtitles: (Array.isArray(payload.subtitles) ? payload.subtitles : [])
+            .slice(0, 30).map(subtitleView).filter(Boolean) });
+        const streams = (Array.isArray(payload.streams) ? payload.streams : [])
+          .slice(0, 30).map((item) => streamView(item, addon.manifest.name)).filter(Boolean);
+        return json({ streams: streams.map((item) =>
+          item.kind === 'torrent' && item.infoHash && who.sessionId
+            ? { ...item, ticket: seal(JSON.stringify({
+              hash: item.infoHash, fileIdx: item.fileIdx, expires: clock() + 600,
+            }), 'torrent:' + slug + ':' + who.sessionId, env) }
+            : item) });
+      }
       if (action === 'search') {
         const type = input.type ?? 'all', query = typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '';
         if (!['all', 'movie', 'series'].includes(type) || query.length < 2) throw new RoomError('Introduce al menos dos caracteres.', 400);
         // Include all installed searchable addons for both types; bound work per addon.
-        const searchable = addons.flatMap((addon) => addon.manifest.catalogs
+        const searchable = addons.filter((addon) => !addon.browserPublic).flatMap((addon) => addon.manifest.catalogs
           .filter((catalog) => (type === 'all' || catalog.type === type) &&
             catalog.search && !catalog.required && supports(addon.manifest, 'catalog', catalog.type))
           .slice(0, 8)
@@ -112,7 +172,7 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
       if (action === 'meta') {
         const type = input.type, id = itemIdentifier(input.id);
         const primary = addons.find((a) => a.id === input.addonId);
-        const candidates = [primary, ...addons.filter((a) => a !== primary)].filter((a) => a && supports(a.manifest, 'meta', type, id));
+        const candidates = [primary, ...addons.filter((a) => a !== primary)].filter((a) => a && !a.browserPublic && supports(a.manifest, 'meta', type, id));
         for (const addon of candidates) {
           try {
             const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), 'meta', type, id));
@@ -125,7 +185,7 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
       if (action === 'streams' || action === 'subtitles') {
         const type = input.type, id = itemIdentifier(input.id);
         const resource = action === 'streams' ? 'stream' : 'subtitles';
-        const candidates = addons.filter((a) => supports(a.manifest, resource, type, id));
+        const candidates = addons.filter((a) => !a.browserPublic && supports(a.manifest, resource, type, id));
         const results = await Promise.all(candidates.map(async (addon) => {
           try {
             const data = await fetchJson(resourceUrl(urlFor(addon, slug, env), resource, type, id));
