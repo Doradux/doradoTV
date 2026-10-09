@@ -68,4 +68,8 @@ En instancias pequeñas de Northflank (512 MB RAM y 1 GB de almacenamiento) se r
 - DORADO_TORRENT_MAX_ACTIVE=1 (un torrent simultáneo por relay)
 - 12 conexiones BitTorrent, 4 MiB/s de descarga y 256 KiB/s de subida (límites internos)
 
-Para películas mayores primero amplía el almacenamiento y la RAM y después sube DORADO_TORRENT_MAX_BYTES. El servidor no transcodifica MKV ni códecs no compatibles con HTML5, porque supondría un gasto de CPU considerable. La descarga torrent no se inicia hasta que un espectador elige una fuente.
+Para películas mayores primero amplía el almacenamiento y la RAM y después sube DORADO_TORRENT_MAX_BYTES. Los vídeos MKV, AVI, MOV, TS y M2TS se remultiplexan a MP4 fragmentado usando FFmpeg y audio AAC, sin recodificar el vídeo. No se guarda un segundo archivo completo. El remux no permite aún saltos temporales; los códecs de vídeo no compatibles siguen necesitando un servidor con más CPU para su transcodificación. La descarga torrent no se inicia hasta que un espectador elige una fuente.
+
+## Contenedores MKV, AVI, MOV y TS
+
+El relay reconoce estos contenedores y puede servirlos mediante una ruta temporal de remux, verificada con el token individual. FFmpeg recibe bytes del torrent por su entrada estándar y entrega un MP4 fragmentado por la salida estándar. Copia el vídeo sin recodificar y convierte el audio a AAC estéreo para compatibilidad. El consumo de CPU es mucho menor que convertir el vídeo entero, y se evitan archivos MP4 duplicados en el almacenamiento limitado. Se admiten como máximo dos procesos de remux simultáneos por relay. No se permiten saltos temporales en esta ruta: el progreso sigue siendo progresivo. Un códec de vídeo incompatible con HTML5 seguirá sin reproducirse, y el límite de tamaño por archivo no cambia.
