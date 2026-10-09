@@ -6,7 +6,11 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+# Keep third-party lifecycle scripts disabled by default, but allow the single
+# native WebTorrent dependency to download its N-API binary for this Linux image.
+RUN npm ci --omit=dev --ignore-scripts \
+  && npm rebuild node-datachannel --foreground-scripts \
+  && node --input-type=module -e "import('webtorrent').then(async ({default: WebTorrent}) => { const client = new WebTorrent({dht: false, lsd: false, tracker: false, natUpnp: false, natPmp: false}); client.destroy(); console.log('Native torrent module OK'); })"
 
 COPY relay ./relay
 
