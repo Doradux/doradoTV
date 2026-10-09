@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { RelayRegistry } from './registry.js';
 import { TorrentRelay, TorrentFault } from './torrent-service.js';
 import { remuxVideo } from './remux.js';
+import { DirectAudioSessions } from './direct-audio.js';
 
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
@@ -121,6 +122,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const torrents = torrentFactory || new TorrentRelay({
     directory, maxBytes: torrentMaxBytes, maxActive: torrentMaxActive,
   });
+  const directAudio = new DirectAudioSessions();
   const now = clock;
   let configuredOrigin = null;
   if (publicUrl) {
@@ -217,6 +219,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
 
   function tick() {
     torrents.tick();
+    directAudio.sweep();
     registry.transaction((state) => {
       state.worker_seen = now();
       for (const [id, session] of Object.entries(state.sessions)) if (now() - session.last_seen > SESSION_TTL) delete state.sessions[id];
@@ -292,9 +295,34 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, mediaOrigin);
     const cors = getCors(request);
-    if (request.method === 'OPTIONS' && (url.pathname.startsWith('/media/') || url.pathname.startsWith('/torrent-media/'))) {
+    if (request.method === 'OPTIONS' && (url.pathname.startsWith('/media/') || url.pathname.startsWith('/torrent-media/') || url.pathname.startsWith('/direct-audio/'))) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       response.writeHead(204, cors); response.end(); return;
+    }
+    const directMedia = url.pathname.match(/^\/direct-audio\/([0-9a-f-]{36})$/);
+    if (directMedia && (request.method === 'GET' || request.method === 'HEAD')) {
+      if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
+      try { directAudio.authenticate(directMedia[1], url.searchParams.get('token')); }
+      catch { json(response, 410, { error: 'Sesión de audio caducada.' }, cors); return; }
+      if (request.method === 'HEAD') {
+        response.writeHead(200, { ...cors, 'Content-Type': 'video/mp4',
+          'Cache-Control': 'private, no-store' });
+        response.end(); return;
+      }
+      let release;
+      try { release = torrents.acquireRemux(); }
+      catch (error) { json(response, error.status || 503, { error: error.message }, cors); return; }
+      try {
+        const remote = await directAudio.open(directMedia[1], url.searchParams.get('token'));
+        if (response.destroyed) { remote.close(); release(); return; }
+        remuxVideo({ file: { stream: () => remote.stream }, response, cors, ffmpeg,
+          spawnProcess, release: () => { remote.close(); release(); } });
+      } catch (error) {
+        release();
+        if (!response.headersSent && !response.destroyed)
+          json(response, 503, { error: 'No se pudo preparar el audio compatible. ' + error.message }, cors);
+      }
+      return;
     }
     const torrentMedia = url.pathname.match(/^\/torrent-media\/([0-9a-f-]{36})\/(video|remux)$/);
     if (torrentMedia && (request.method === 'GET' || request.method === 'HEAD')) {
@@ -404,6 +432,17 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
         }));
         json(response, 200, { max_connections: maxConnections, active_count: active.length, local_count: active.length, viewer_count: Object.keys(state.sessions).length, connections }); return;
       }
+      if (request.method === 'POST' && url.pathname === '/direct-audio/start') {
+        const input = await body(request);
+        json(response, 200, directAudio.start(input.url, normalizeUserId(input.user_id), requestOrigin(request)));
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/direct-audio/stop') {
+        const input = await body(request);
+        if (!UUID.test(input.session_id || '') || !normalizeUserId(input.user_id)) throw Error('Sesión inválida.');
+        json(response, 200, directAudio.stop(input.session_id, normalizeUserId(input.user_id)));
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/torrent/start') {
         const requestData = await body(request);
         json(response, 200, await torrents.start(requestData)); return;
@@ -486,7 +525,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       { error: error.message });
     }
   });
-  return { server, registry, torrents, tick, stop() { torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
+  return { server, registry, torrents, directAudio, tick, stop() { directAudio.shutdown(); torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

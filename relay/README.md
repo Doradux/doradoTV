@@ -79,3 +79,22 @@ El relay reconoce estos contenedores y puede servirlos mediante una ruta tempora
 Para MKV/AVI/MOV/TS/M2TS grandes, WebTorrent selecciona ventanas pequeñas y consecutivas del vídeo y guarda piezas verificadas en un almacén circular limitado a **256 MiB**. De esta manera un vídeo de 8 GiB no necesita 8 GiB de disco; el límite de tamaño progresivo es **12 GiB** por archivo. Los torrents menores de 700 MiB mantienen almacenamiento convencional y peticiones de acceso aleatorio. Los MP4 grandes siguen requiriendo almacenamiento suficiente, porque el navegador y sus índices pueden pedir rangos lejanos.
 
 Limitaciones actuales: un solo espectador de un torrent grande simultáneamente, sin adelantar/rebobinar, reinicio de swarm al parar para re-descargar los fragmentos ya descartados. El tráfico de datos BitTorrent y la retransmisión al espectador continúan; vigila las cuotas de Northflank. Se mantiene un torrent simultáneo por defecto y el bloqueo de IPs privadas recibido de los trackers.
+
+## Audio compatible para vídeos HTTPS directos
+
+Las fuentes HTTPS de addons como TorBox se reproducen directamente en el navegador por defecto.
+Si la imagen funciona pero no hay sonido (pistas AC-3, E-AC-3 o DTS), el espectador puede
+activar **Audio compatible** desde los controles del reproductor.
+DoradoTV abre una sesión temporal en su relay de sala y FFmpeg convierte la primera pista
+de audio a AAC estéreo mientras copia el vídeo al contenedor MP4 fragmentado. No escribe una
+segunda película completa en disco y no envía al navegador la clave privada del relay.
+
+Limitaciones: es reproducción **progresiva, sin avance/retroceso**; cambiar de modo reinicia
+la película desde el principio. Depende de que el origen HTTPS proporcione un flujo de
+vídeo válido que FFmpeg pueda leer secuencialmente, y no convierte un códec de vídeo
+incompatible con el navegador. URLs que requieran cabeceras de autenticación específicas
+(no incluidas en enlaces de descarga firmados) o MP4 con su índice exclusivamente al final
+pueden necesitar un método distinto. El relay valida las IP públicas en DNS y en cada
+redirección HTTPS, impide acceder a direcciones privadas, usa tokens de sesión temporales
+y permite como máximo **dos** procesos de remux simultáneos (sumando BitTorrent y HTTPS).
+Al terminar se revoca la sesión y se cierra la conexión de descarga remota.
