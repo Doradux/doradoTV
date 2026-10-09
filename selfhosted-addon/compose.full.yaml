@@ -1,0 +1,49 @@
+# Run from selfhosted-addon/. Set .env first and configure TWO HTTPS reverse proxies.
+services:
+  addon:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 5310
+      SOURCES_FILE: /data/sources.json
+    volumes:
+      - ./config:/data:ro
+    ports:
+      - "127.0.0.1:5310:5310"
+    mem_limit: 256m
+
+  relay:
+    build:
+      context: ..
+      dockerfile: Dockerfile.relay
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 5300
+      DORADO_RELAY_DIR: /data
+      DORADO_TORRENT_MAX_BYTES: ${DORADO_TORRENT_MAX_BYTES:-6442450944}
+      DORADO_TORRENT_MAX_ACTIVE: ${DORADO_TORRENT_MAX_ACTIVE:-1}
+    volumes:
+      - relay-data:/data
+    ports:
+      - "127.0.0.1:5300:5300"
+    mem_limit: 2g
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    profiles: ["indexer"]
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/Madrid
+    volumes:
+      - jackett-config:/config
+    ports:
+      - "127.0.0.1:9117:9117"
+
+volumes:
+  relay-data:
+  jackett-config:

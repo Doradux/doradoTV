@@ -1,0 +1,3 @@
+.env
+config/sources.json
+node_modules/
