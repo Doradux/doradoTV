@@ -4,7 +4,7 @@
 #watch-layout.media-mode-cinema #more-wrap {display:none!important}
 #watch-layout:not(.media-mode-cinema) #sa-cinema-page {display:none!important}
 .watch-layout[hidden],.sa-cinema-page[hidden],.sa-overlay[hidden],.sa-browser-stage[hidden],
-#vod-tools[hidden], .sa-install[hidden] {display:none!important}
+#vod-tools[hidden], #vod-transport[hidden], .sa-install[hidden] {display:none!important}
 #watch-layout.media-mode-cinema {transition:opacity .32s ease}
 #watch-layout.media-mode-cinema .player-column {animation:sa-reveal .48s cubic-bezier(.2,.8,.2,1) both}
 #sa-cinema-page {width:100%;min-width:0;color:#e5e9f2;animation:sa-reveal .48s cubic-bezier(.2,.8,.2,1) both}
@@ -119,14 +119,20 @@
 .sa-primary{background:#f1c97e;color:#22170b;border:0;padding:11px;border-radius:9px;cursor:pointer;font-weight:700}
 .sa-manage-dialog .sa-message{padding:0 20px 15px}
 .sa-open{display:flex;gap:8px;align-items:center;padding:10px 13px;background:#151c29;color:#e9c582;border:1px solid #ffffff30;border-radius:10px;cursor:pointer;font-size:12px}
-.vod-tools{padding:4px 19px 15px;background:#121924;animation:sa-reveal .35s both}
-#vod-seek{width:100%;height:5px;accent-color:#eabd69;cursor:pointer;margin:8px 0 13px}
-.vod-transport{display:flex;align-items:center;justify-content:space-between;gap:5px}
-.vod-transport button{display:inline-flex;gap:3px;align-items:center;background:transparent;border:0;color:#e9eef4;border-radius:8px;padding:8px;cursor:pointer;transition:background .25s,color .25s}
-.vod-transport button:hover:not(:disabled){background:#ffffff18;color:#f4cd85}
-.vod-transport button:disabled{opacity:.32;cursor:default}
-.vod-transport small{font-size:10px}
-.vod-transport output{font-variant-numeric:tabular-nums;color:#b7c1d1;font-size:11px}
+/* VOD uses the same glass control surface as live/M3U playback. */
+.vod-tools { display:flex; align-items:center; gap:16px; width:100%; min-width:0; padding:13px 19px 5px; border-bottom:1px solid #ffffff0e; }
+#vod-seek { flex:1 1 auto; min-width:0; height:18px; padding:0; margin:0; accent-color:#eabd69; cursor:pointer; }
+#vod-seek:disabled { cursor:not-allowed; opacity:.42; }
+#vod-clock { flex:0 0 auto; min-width:91px; text-align:right; font-variant-numeric:tabular-nums; color:#b7c1d1; font-size:11px; white-space:nowrap; }
+.vod-transport { display:flex; align-items:center; justify-content:center; gap:3px; flex-shrink:0; }
+.vod-transport button { display:inline-flex; gap:3px; align-items:center; justify-content:center; background:transparent; border:0; color:#e9eef4; border-radius:8px; padding:5px; cursor:pointer; transition:background .25s,color .25s; }
+.vod-transport button:hover:not(:disabled) { background:#ffffff18; color:#f4cd85; }
+.vod-transport button:disabled { opacity:.32; cursor:default; }
+.vod-transport small { font-size:10px; }
+@media (max-width: 639px) {
+  .vod-tools { gap:8px; padding:10px 12px 4px; }
+  #vod-clock { min-width:84px; font-size:10px; }
+}
 @keyframes sa-reveal{from{opacity:0;transform:translateY(12px);filter:blur(5px)}to{opacity:1;transform:translateY(0);filter:blur(0)}}
 @keyframes sa-stagger{from{opacity:0;transform:translateY(18px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
 @media(max-width:750px){.sa-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:13px 10px}.sa-feature{flex-direction:row;align-items:flex-start}.sa-feature img,.sa-feature .sa-no-poster{width:90px}.sa-browser-stage{padding:16px}}

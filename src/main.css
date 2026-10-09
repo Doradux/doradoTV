@@ -41,7 +41,8 @@
 .eyebrow { color: #bb9b60; font-size: 10px; font-weight: 650; letter-spacing: 1.7px; }
 .empty-player h2 { margin-top: 12px; font-size: clamp(20px, 2.25vw, 32px); font-weight: 650; letter-spacing: -.8px; }
 .empty-player p { margin-top: 8px; color: #858995; font-size: 13px; }
-.player-controls { position: relative; display: flex; align-items: center; gap: 12px; min-height: 70px; padding: 12px 18px; border-top: 1px solid #ffffff0a; background: #11141b; transition: padding-inline .4s cubic-bezier(.2,.8,.2,1); }
+.player-controls { position: relative; display: flex; flex-direction: column; min-width: 0; border-top: 1px solid #ffffff0a; background: #11141b; }
+.player-actions { display: flex; align-items: center; gap: 12px; min-height: 70px; width: 100%; padding: 12px 18px; transition: padding-inline .4s cubic-bezier(.2,.8,.2,1); }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 40px; height: 40px; border: 1px solid transparent; border-radius: 11px; color: #9da3b2; transition: color .18s, background .18s, border-color .18s; }
 .icon-button:hover { background: #ffffff0a; color: #fff; }
 .icon-button[aria-pressed="true"] { color: #f0c570; background: #efbf6312; border-color: #efbf6320; }
@@ -130,11 +131,26 @@
 .is-theater .player-column { grid-column: 1 / -1; }
 .is-theater .player-shell { margin-inline: calc(-1 * var(--gutter)); border-radius: 0; border-inline: 0; }
 .is-theater .video-stage { aspect-ratio: auto; height: clamp(220px, 70dvh, 980px); }
-.is-theater .player-controls { padding-inline: var(--gutter); }
+.is-theater .player-actions { padding-inline: var(--gutter); }
+.is-theater .vod-tools { padding-inline: var(--gutter); }
 .is-theater .channel-panel { grid-column: 1 / -1; }
 .player-shell:fullscreen { display: flex; flex-direction: column; width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; }
 .player-shell:fullscreen .video-stage { flex: 1; min-height: 0; height: auto; aspect-ratio: auto; }
-.player-shell:fullscreen .player-controls { flex-shrink: 0; }
+/* Full-screen controls float above the video and disappear on inactivity. */
+.player-shell:fullscreen .player-controls {
+  position: absolute; z-index: 20; left: 0; right: 0; bottom: 0;
+  width: 100%; border: 0; background: linear-gradient(to top, #080b10f5, #10141ce0 65%, #10141c82);
+  transition: opacity .25s ease, transform .3s cubic-bezier(.2,.8,.2,1), visibility .25s;
+}
+.player-shell:fullscreen.fs-controls-idle { cursor: none; }
+.player-shell:fullscreen.fs-controls-idle .player-controls {
+  opacity: 0; visibility: hidden; transform: translateY(20px); pointer-events: none;
+}
+.player-shell:fullscreen .player-actions { padding: 11px clamp(16px, 3vw, 50px) 17px; }
+.player-shell:fullscreen .vod-tools { padding-inline: clamp(16px, 3vw, 50px); }
+@media (prefers-reduced-motion: reduce) {
+  .player-shell:fullscreen .player-controls { transition: none; }
+}
 .login-screen { background: radial-gradient(ellipse at 50% 25%, #c5993512, transparent 65%), #090b10; }
 .login-screen > section { background: #12151c; border-color: #ffffff12; }
 @media (min-width: 640px) and (max-width: 1023px) {
@@ -154,11 +170,23 @@
 @media (min-width: 1600px) {
   .watch-layout { grid-template-columns: minmax(0, 1fr) 390px; gap: 32px; }
 }
+/* The sidebar reduces the player width on laptop-sized screens. Give the
+   episode/skip buttons their own row rather than clipping volume/fullscreen. */
+@media (min-width: 640px) and (max-width: 1320px) {
+  .player-controls.is-vod .player-actions { flex-wrap: wrap; }
+  .player-controls.is-vod .vod-transport { order: 5; flex: 1 0 100%; justify-content: center; }
+  .player-shell:fullscreen .player-actions { flex-wrap: nowrap; }
+  .player-shell:fullscreen .vod-transport { order: 0; flex: 0 0 auto; }
+}
 @media (max-width: 639px) {
   .app-header { min-height: 82px; margin-bottom: 20px; }
   .header-live { display: none; }
   .player-shell { border-radius: 14px; }
-  .player-controls { min-height: 62px; gap: 4px; padding: 10px; }
+  .player-actions { min-height: 62px; gap: 4px; padding: 10px; }
+  .player-controls.is-vod .player-actions { flex-wrap: wrap; }
+  .player-controls.is-vod .vod-transport { order: 5; flex: 1 0 100%; justify-content: center; gap: 10px; }
+  .player-controls.is-vod .vod-transport button { min-height: 31px; }
+  .player-controls.is-vod .playback-badge { display: none; }
   .icon-button { width: 36px; height: 38px; }
   .view-controls { gap: 0; }
   #volume { width: clamp(38px, 10vw, 65px); }
