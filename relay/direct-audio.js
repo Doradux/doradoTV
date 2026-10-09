@@ -51,6 +51,10 @@ export async function openDirectMedia(value, {
           lookup: (_hostname, options, callback) => callback(null,
             options?.all ? [pin] : pin.address, pin.family),
         }, (res) => {
+          // Keep the response in paused mode until the media proxy attaches its
+          // consumer. A 'data' listener here would otherwise discard early
+          // chunks (often the entire first HTTP Range requested by FFprobe).
+          res.pause();
           if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
             res.resume();
             req.destroy();

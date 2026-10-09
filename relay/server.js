@@ -321,6 +321,10 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       }
       try { await vod.proxyInput(source, request, response); }
       catch (error) {
+        // Do not log signed media URLs or credentials.
+        const reason = String(error?.message || 'unknown').replace(/https?:\/\/\S+/g, '[redacted-url]').slice(0, 180);
+        source.upstreamError = reason;
+        console.warn('[vod] input upstream failed', source.key.slice(0, 8), reason);
         if (!response.headersSent) json(response, 503, { error: 'No se pudo obtener el rango solicitado.' });
         else response.destroy();
       }

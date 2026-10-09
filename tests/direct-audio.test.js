@@ -113,3 +113,38 @@ test('relay converts direct MKV AC3 audio to AAC while copying video, with acces
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('HTTPS Range data remains buffered until the VOD proxy attaches its reader', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { EventEmitter } = await import('node:events');
+  const { openDirectMedia } = await import('../relay/direct-audio.js');
+  const bytes = Buffer.alloc(4096, 0x4a);
+  const remote = await openDirectMedia('https://sample.example.org/movie.mkv', {
+    range: 'bytes=0-4095',
+    resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+    transport: (_url, options, callback) => {
+      assert.equal(options.headers.Range, 'bytes=0-4095');
+      const request = new EventEmitter();
+      request.destroy = () => {};
+      request.end = () => queueMicrotask(() => {
+        const response = new PassThrough();
+        response.statusCode = 206;
+        response.headers = {
+          'content-length': String(bytes.length),
+          'content-range': 'bytes 0-4095/20000',
+        };
+        callback(response);
+        response.end(bytes);
+      });
+      return request;
+    },
+  });
+  // Simulate the delay while the media endpoint prepares HTTP response headers.
+  await new Promise((resolve) => setTimeout(resolve, 12));
+  const actual = [];
+  for await (const chunk of remote.stream) actual.push(chunk);
+  assert.deepEqual(Buffer.concat(actual), bytes);
+  assert.equal(remote.status, 206);
+  assert.equal(remote.contentRange, 'bytes 0-4095/20000');
+  remote.close();
+});

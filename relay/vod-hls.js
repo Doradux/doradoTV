@@ -149,10 +149,21 @@ export class VodHls {
       source.state = 'ready';
     } catch (err) {
       source.state = 'failed';
-      source.error = /timeout|seed|metadata|torrent/i.test(err.message)
-        ? 'No se pudo obtener el vídeo desde los seeders.' :
-          'No se pudo leer la duración o el formato del vídeo. Prueba otra fuente.';
-      console.warn('[vod] probe failed', source.key.slice(0, 8), err?.message?.slice(0, 180));
+      const upstream = source.upstreamError || '';
+      source.error = /HTTP 403|HTTP 401/.test(upstream)
+        ? 'El proveedor ha rechazado la conexión del servidor Ubuntu. Prueba otra fuente o un torrent directo.'
+        : /HTTP 429/.test(upstream)
+          ? 'El proveedor está limitando las descargas desde el servidor. Espera o prueba otra fuente.'
+          : /HTTP 404|HTTP 410/.test(upstream)
+            ? 'El enlace de descarga ha caducado. Actualiza las fuentes.'
+            : /salto|rangos|Range/.test(upstream)
+              ? 'Esta fuente no admite búsqueda por rangos. Prueba otra fuente.'
+              : /timeout|seed|metadata|torrent/i.test(err.message)
+                ? 'No se pudo obtener el vídeo desde los seeders.'
+                : 'No se pudo leer la duración o el formato del vídeo. Prueba otra fuente.';
+      const diagnostic = String(err?.message || 'unknown')
+        .replace(/https?:\/\/\S+/g, '[redacted-url]').slice(0, 200);
+      console.warn('[vod] probe failed', source.key.slice(0, 8), diagnostic);
     }
   }
   proxyUrl(source) {
