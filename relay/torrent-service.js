@@ -3,7 +3,8 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const HASH = /^[0-9a-f]{40}$/i;
-const VIDEO = /\.(mp4|m4v|webm|ogg)$/i;
+const VIDEO = /\.(mp4|m4v|webm|ogg|mkv|avi|mov|ts|m2ts)$/i;
+const REMUX = /\.(mkv|avi|mov|ts|m2ts)$/i;
 const DEFAULT_MAX_BYTES = 700 * 1024 * 1024;
 const VALID_USER = /^[a-zA-Z0-9._:-]{1,128}$/;
 // Exclude local infrastructure addresses from untrusted tracker/DHT peer lists.
@@ -65,6 +66,7 @@ export class TorrentRelay {
     this.clock = clock;
     this.swarms = new Map();
     this.viewers = new Map();
+    this.activeRemux = 0;
   }
   async start({ info_hash: hash, file_idx: fileIdx, user_id: userId }) {
     if (!HASH.test(hash || '') || !VALID_USER.test(userId || '') ||
@@ -114,10 +116,11 @@ export class TorrentRelay {
       clearTimeout(timer);
       const candidates = torrent.files.filter((file) => VIDEO.test(file.name) && file.length > 0);
       const indexed = Number.isSafeInteger(swarm.fileIdx) ? torrent.files[swarm.fileIdx] : null;
-      const file = swarm.fileIdx !== null
-        ? (indexed && candidates.includes(indexed) ? indexed : null)
-        : [...candidates].sort((a,b) => b.length - a.length)[0];
-      if (!file) return this.fail(swarm, Error('Este torrent no contiene MP4/WebM/OGG reproducible en navegador.'));
+      // Some addons report a fileIdx from a different torrent index or a
+      // subtitle. Prefer the requested video when valid, otherwise the largest.
+      const file = indexed && candidates.includes(indexed)
+        ? indexed : [...candidates].sort((a,b) => b.length - a.length)[0];
+      if (!file) return this.fail(swarm, Error('El torrent no contiene un archivo de vídeo compatible (MP4, WebM, MKV o AVI).'));
       if (file.length > this.maxBytes) return this.fail(swarm, Error(
         'Este vídeo necesita ' + (file.length / 1048576).toFixed(0) +
         ' MB. El relay admite un máximo de ' + (this.maxBytes / 1048576).toFixed(0) + ' MB. Amplía el almacenamiento del servidor.'));
@@ -133,7 +136,8 @@ export class TorrentRelay {
     if (!swarm) throw new TorrentFault('Torrent ya no disponible.', 410);
     if (swarm.state === 'failed') throw new TorrentFault(swarm.error || 'La descarga torrent falló.', 503);
     return { state: swarm.state, ...(swarm.state === 'ready' ? {
-      playback_url: base + '/torrent-media/' + id + '/video?token=' + viewer.token,
+      playback_url: base + '/torrent-media/' + id + (REMUX.test(swarm.file.name) ? '/remux' : '/video') + '?token=' + viewer.token,
+      mode: REMUX.test(swarm.file.name) ? 'remux' : 'direct',
       bytes: swarm.file.length,
       peers: swarm.torrent?.numPeers || 0,
     } : {}) };
@@ -149,12 +153,26 @@ export class TorrentRelay {
     if (swarm) swarm.lastUsed = this.clock();
     return viewer;
   }
-  media(id, token, range) {
+  media(id, token, range, mode = 'direct') {
     const viewer = this.auth(id, undefined, token);
     const swarm = this.swarms.get(viewer.hash);
     if (!swarm || !swarm.file || swarm.state !== 'ready') throw new TorrentFault('Preparando vídeo torrent.', 503);
+    const isRemux = REMUX.test(swarm.file.name);
+    if ((mode === 'remux') !== isRemux) throw new TorrentFault('Ruta de vídeo inválida.', 400);
+    if (isRemux) return { mode: 'remux', name: swarm.file.name, length: swarm.file.length,
+      stream: () => swarm.file.createReadStream() };
     const bounds = rangeForTorrent(range, swarm.file.length);
-    return { ...bounds, length: swarm.file.length, name: swarm.file.name, stream: () => swarm.file.createReadStream({ start: bounds.start, end: bounds.end }) };
+    return { ...bounds, mode: 'direct', length: swarm.file.length, name: swarm.file.name,
+      stream: () => swarm.file.createReadStream({ start: bounds.start, end: bounds.end }) };
+  }
+  acquireRemux() {
+    // Remuxing does not duplicate a torrent download, but each HTTP viewer uses
+    // one FFmpeg process. Keep it tightly bounded on small Northflank machines.
+    if (this.activeRemux >= 2) throw new TorrentFault(
+      'El relay ya está convirtiendo dos vídeos. Espera o cierra otra reproducción.', 429);
+    this.activeRemux++;
+    let released = false;
+    return () => { if (!released) { released = true; this.activeRemux--; } };
   }
   stop(id, userId) {
     const viewer = this.viewers.get(id);

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { RelayRegistry } from './registry.js';
 import { TorrentRelay, TorrentFault } from './torrent-service.js';
+import { remuxVideo } from './remux.js';
 
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
@@ -295,14 +296,29 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       response.writeHead(204, cors); response.end(); return;
     }
-    const torrentMedia = url.pathname.match(/^\/torrent-media\/([0-9a-f-]{36})\/video$/);
+    const torrentMedia = url.pathname.match(/^\/torrent-media\/([0-9a-f-]{36})\/(video|remux)$/);
     if (torrentMedia && (request.method === 'GET' || request.method === 'HEAD')) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       let file;
-      try { file = torrents.media(torrentMedia[1], url.searchParams.get('token'), request.headers.range); }
+      try { file = torrents.media(torrentMedia[1], url.searchParams.get('token'),
+        request.headers.range, torrentMedia[2] === 'remux' ? 'remux' : 'direct'); }
       catch (error) {
         const status = error instanceof TorrentFault ? error.status : 503;
         json(response, status, { error: error.message }, cors); return;
+      }
+      if (file.mode === 'remux') {
+        if (request.method === 'HEAD') {
+          response.writeHead(200, { ...cors, 'Content-Type': 'video/mp4',
+            'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+          response.end(); return;
+        }
+        let release;
+        try { release = torrents.acquireRemux(); }
+        catch (error) {
+          json(response, error.status || 503, { error: error.message }, cors); return;
+        }
+        remuxVideo({ file, response, cors, ffmpeg, spawnProcess, release });
+        return;
       }
       const contentType = /\.webm$/i.test(file.name || '') ? 'video/webm' : /\.ogg$/i.test(file.name || '') ? 'video/ogg' : 'video/mp4';
       const headers = {
@@ -373,7 +389,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       return;
     }
     if (request.method === 'GET' && url.pathname === '/health') {
-      json(response, 200, { ok: true, torrent: { supported: true, maxFileBytes: torrentMaxBytes, nativeInstalled: existsSync(new URL('../node_modules/node-datachannel/build/Release/node_datachannel.node', import.meta.url)) } }); return;
+      json(response, 200, { ok: true, torrent: { supported: true, remux: true, maxFileBytes: torrentMaxBytes, nativeInstalled: existsSync(new URL('../node_modules/node-datachannel/build/Release/node_datachannel.node', import.meta.url)) } }); return;
     }
     if (!sameSecret(request.headers.authorization?.replace(/^Bearer /, ''), secret)) { json(response, 401, { error: 'No autorizado.' }); return; }
     try {

@@ -279,6 +279,7 @@ function mountPlayer(session, account) {
     if (torrentClient) { const old = torrentClient; torrentClient = null; old.destroy(() => {}); }
     vodSession = null;
     vodNavigation = {};
+    for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
     $('#vod-tools').hidden = true;
     $('#playback-badge').textContent = 'EN DIRECTO';
     setConnecting(false);
@@ -405,14 +406,14 @@ function mountPlayer(session, account) {
     if (!vodSession) return;
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
     const bounds = video.seekable.length ? { start: video.seekable.start(0), end: video.seekable.end(video.seekable.length - 1) } : null;
-    const canSeek = duration > 0 && bounds && bounds.end > bounds.start;
+    const canSeek = !vodSession.remux && duration > 0 && bounds && bounds.end > bounds.start;
     for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).disabled = !canSeek;
     if (!$('#vod-seek').matches(':active')) $('#vod-seek').value = canSeek ? String(Math.round(1000 * video.currentTime / duration)) : '0';
     $('#vod-clock').textContent = formatPlaybackTime(video.currentTime) + ' / ' + (duration ? formatPlaybackTime(duration) : '--:--');
     $('#vod-seek').style.setProperty('--seek-fill', (Number($('#vod-seek').value) / 10) + '%');
   }
   function seekVod(seconds) {
-    if (!vodSession || !video.seekable.length) return;
+    if (!vodSession || vodSession.remux || !video.seekable.length) return;
     const start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
     const next = seekTarget(video.currentTime, seconds, start, end);
     if (next !== null) video.currentTime = next;
@@ -455,8 +456,14 @@ function mountPlayer(session, account) {
         }
         if (token !== playbackToken) return;
         if (ready?.state !== 'ready') throw Error('No se encontraron pares BitTorrent a tiempo. Prueba otra fuente.');
+        vodSession.remux = !!ready.remux;
+        const seekHint = ready.remux ? 'Los saltos de tiempo no están disponibles mientras se convierte MKV.' : '';
+        for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = seekHint;
+        updateVodProgress();
         video.src = ready.url;
-        setStatus('Preparando vídeo desde el relay…');
+        setStatus(ready.remux
+          ? 'Convirtiendo MKV a MP4 sin recodificar el vídeo. Espera unos segundos…'
+          : 'Preparando vídeo desde el relay…');
         torrentHeartbeat = setInterval(() => {
           if (token === playbackToken && torrentSessionId) {
             inRoom('torrent-ping', { data: { id: torrentSessionId } }).catch(() => {});
@@ -508,7 +515,11 @@ function mountPlayer(session, account) {
         video.load();
       }
       setConnecting(false); setLoading(false);
-      setStatus(error.message || 'No se pudo iniciar el vídeo.', true);
+      const unsupportedCodec = vodSession?.remux &&
+        (video.error?.code === 4 || error?.name === 'NotSupportedError');
+      setStatus(unsupportedCodec
+        ? 'El MKV se ha convertido, pero tu navegador no admite el códec de esta versión. Prueba una fuente H.264 o VP9.'
+        : error.message || 'No se pudo iniciar el vídeo.', true);
       $('#retry-video').hidden = false;
     }
   }
@@ -840,11 +851,11 @@ function mountPlayer(session, account) {
   $('#vod-back').onclick = () => seekVod(-10);
   $('#vod-forward').onclick = () => seekVod(10);
   $('#vod-seek').oninput = () => {
-    if (!vodSession || !Number.isFinite(video.duration)) return;
+    if (!vodSession || vodSession.remux || !Number.isFinite(video.duration)) return;
     $('#vod-clock').textContent = formatPlaybackTime(video.duration * Number($('#vod-seek').value) / 1000) + ' / ' + formatPlaybackTime(video.duration);
   };
   $('#vod-seek').onchange = () => {
-    if (!vodSession || !video.seekable.length || !Number.isFinite(video.duration)) return;
+    if (!vodSession || vodSession.remux || !video.seekable.length || !Number.isFinite(video.duration)) return;
     const start = video.seekable.start(0), end = video.seekable.end(video.seekable.length - 1);
     video.currentTime = Math.min(end, Math.max(start, video.duration * Number($('#vod-seek').value) / 1000));
     updateVodProgress();
@@ -852,7 +863,9 @@ function mountPlayer(session, account) {
   video.addEventListener('error', () => {
     if (vodSession && !pageUnloading) {
       setConnecting(false); setLoading(false);
-      setStatus('La reproducción se interrumpió.', true);
+      setStatus(vodSession.remux && video.error?.code === 4
+        ? 'El códec del archivo MKV no es compatible con este navegador. Prueba otra versión en H.264 o VP9.'
+        : 'La reproducción se interrumpió.', true);
       $('#retry-video').hidden = false;
       return;
     }

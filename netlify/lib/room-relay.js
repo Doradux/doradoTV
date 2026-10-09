@@ -147,9 +147,10 @@ export function createRelayClient(input = null, fetcher = relayFetch) {
       try { video = new URL(result.playback_url); }
       catch { throw new RoomError('El relay devolvió un vídeo inválido.', 503); }
       if (video.protocol !== 'https:' || video.origin !== cfg.url ||
-          !/^\/torrent-media\/[a-f0-9-]{36}\/video$/.test(video.pathname))
+          !/^\/torrent-media\/[a-f0-9-]{36}\/(video|remux)$/.test(video.pathname))
         throw new RoomError('URL de torrent no autorizada.', 503);
-      return { state: 'ready', url: video.href, peers: Number(result.peers) || 0 };
+      return { state: 'ready', url: video.href, peers: Number(result.peers) || 0,
+        remux: video.pathname.endsWith('/remux') };
     },
     async torrentPing(id, identity) {
       return call('/torrent/ping', 'POST', { session_id: id, user_id: identity });
