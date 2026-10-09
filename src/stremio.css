@@ -203,3 +203,9 @@
 .sa-browser-optin { display:flex; align-items:flex-start; gap:9px; line-height:1.6; color:#c7bba6; font-size:11px; }
 .sa-browser-optin input { margin-top:3px; flex-shrink:0; accent-color:#eabb6d; }
 @media (max-width:600px) { .sa-addon { flex-wrap:wrap; } .sa-addon-actions { width:100%; justify-content:flex-end; } }
+
+/* Direct HTTPS videos may contain E-AC-3 / DTS audio the browser cannot decode. */
+#vod-audio { margin-left:8px; padding:7px 10px; gap:5px; border:1px solid #d8b06c55; color:#e8c787; font-size:11px; white-space:nowrap; }
+#vod-audio[aria-pressed="true"] { background:#c9973a28; border-color:#d8b06ca8; }
+#vod-audio[hidden] { display:none!important; }
+@media(max-width:600px) { #vod-audio { flex:0 0 auto; font-size:10px; padding:5px 8px; } }

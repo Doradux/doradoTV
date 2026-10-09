@@ -65,6 +65,7 @@ function mountPlayer(session, account) {
                 <button id="vod-back" type="button" disabled aria-label="Retroceder 10 segundos" title="Retroceder 10 segundos">${iconSvg(RotateCcw, 'h-5 w-5')}<small>10</small></button>
                 <button id="vod-forward" type="button" disabled aria-label="Avanzar 10 segundos" title="Avanzar 10 segundos">${iconSvg(RotateCw, 'h-5 w-5')}<small>10</small></button>
                 <button id="vod-next" type="button" disabled aria-label="Siguiente episodio" title="Siguiente episodio">${iconSvg(SkipForward, 'h-5 w-5')}</button>
+                <button id="vod-audio" type="button" hidden aria-pressed="false" title="Convierte el audio no compatible a AAC en tu servidor. Reinicia el vídeo.">${iconSvg(Volume2, 'h-4 w-4')}<span>Audio compatible</span></button>
               </div>
               <div class="volume-control"><button id="mute" type="button" title="Silenciar" aria-label="Silenciar" aria-pressed="false" class="icon-button">${morphSvg(Volume2, 'volume-icon')}</button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volumen" /><output id="volume-value" for="volume" class="volume-value" aria-hidden="true">80%</output></div>
               <span id="playback-badge" class="playback-badge">EN DIRECTO</span>
@@ -182,6 +183,7 @@ function mountPlayer(session, account) {
   let vodSession = null;
   let vodNavigation = {};
   let torrentSessionId = null;
+  let directAudioSessionId = null;
   let torrentHeartbeat = null;
   let torrentWait = null;
   let torrentClient = null;
@@ -280,6 +282,11 @@ function mountPlayer(session, account) {
       torrentSessionId = null;
       inRoom('torrent-stop', { data: { id }, keepalive: true }).catch(() => {});
     }
+    if (directAudioSessionId) {
+      const id = directAudioSessionId;
+      directAudioSessionId = null;
+      inRoom('direct-audio-stop', { data: { id }, keepalive: true }).catch(() => {});
+    }
     if (torrentClient) { const old = torrentClient; torrentClient = null; old.destroy(() => {}); }
     vodSession = null;
     vodNavigation = {};
@@ -287,6 +294,7 @@ function mountPlayer(session, account) {
     for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
     $('#vod-tools').hidden = true;
     $('#vod-transport').hidden = true;
+    $('#vod-audio').hidden = true;
     $('.player-controls').classList.remove('is-vod');
     $('#playback-badge').textContent = 'EN DIRECTO';
     setConnecting(false);
@@ -430,11 +438,16 @@ function mountPlayer(session, account) {
       updateVodProgress();
     }
   }
-  async function playVod({ source, title, navigation = {} }) {
+  async function playVod({ source, title, navigation = {}, compatibleAudio = false }) {
     stop();
     const token = playbackToken;
     active = null;
-    vodSession = { source, title, navigation };
+    vodSession = { source, title, navigation, compatibleAudio, remux: compatibleAudio };
+    const canConvertAudio = source?.kind === 'https' &&
+      typeof source.url === 'string' && !!source.audioTicket && !/\.m3u8(?:$|[?#])/i.test(source.url);
+    $('#vod-audio').hidden = !canConvertAudio;
+    $('#vod-audio').setAttribute('aria-pressed', String(compatibleAudio));
+    $('#vod-audio').querySelector('span').textContent = compatibleAudio ? 'Audio original' : 'Audio compatible';
     setVodNavigation(navigation);
     $('#vod-tools').hidden = false;
     $('#vod-transport').hidden = false;
@@ -484,8 +497,19 @@ function mountPlayer(session, account) {
           }
         }, 20000);
       } else if (source.url) {
-        const path = new URL(source.url).pathname.toLowerCase();
-        if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
+        if (compatibleAudio) {
+          setStatus('Convirtiendo audio a AAC desde el servidor. El vídeo empezará desde el principio…');
+          if (!source.audioTicket) throw Error('Esta fuente no tiene autorización para convertir el audio. Actualiza la búsqueda.');
+          const audio = await inRoom('direct-audio-start', { data: { ticket: source.audioTicket } });
+          if (token !== playbackToken) {
+            inRoom('direct-audio-stop', { data: { id: audio.id }, keepalive: true }).catch(() => {});
+            return;
+          }
+          directAudioSessionId = audio.id;
+          video.src = audio.url;
+        } else {
+          const path = new URL(source.url).pathname.toLowerCase();
+          if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
           const { default: Hls } = await import('hls.js');
           if (token !== playbackToken) return;
           if (!Hls.isSupported()) throw Error('No hay soporte HLS en este navegador.');
@@ -496,7 +520,8 @@ function mountPlayer(session, account) {
             hls.once(Hls.Events.MANIFEST_PARSED, resolve);
             hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) reject(Error('No se puede cargar el vídeo.')); });
           });
-        } else video.src = source.url;
+          } else video.src = source.url;
+        }
       } else throw Error('Fuente inválida.');
       if (token !== playbackToken) return;
       try { await video.play(); }
@@ -862,6 +887,10 @@ function mountPlayer(session, account) {
     video.addEventListener(type, updateVodProgress));
   $('#vod-prev').onclick = () => vodNavigation.previous?.();
   $('#vod-next').onclick = () => vodNavigation.next?.();
+  $('#vod-audio').onclick = () => {
+    if (!vodSession || connecting) return;
+    playVod({ ...vodSession, compatibleAudio: !vodSession.compatibleAudio });
+  };
   $('#vod-back').onclick = () => seekVod(-10);
   $('#vod-forward').onclick = () => seekVod(10);
   $('#vod-seek').addEventListener('pointerdown', () => { scrubbingVod = true; });
@@ -884,9 +913,11 @@ function mountPlayer(session, account) {
   video.addEventListener('error', () => {
     if (vodSession && !pageUnloading) {
       setConnecting(false); setLoading(false);
-      setStatus(vodSession.remux && video.error?.code === 4
-        ? 'El códec del archivo MKV no es compatible con este navegador. Prueba otra versión en H.264 o VP9.'
-        : 'La reproducción se interrumpió.', true);
+      setStatus(vodSession.compatibleAudio
+        ? 'No se pudo preparar el audio compatible de esta fuente. Prueba otra versión o pulsa Audio original.'
+        : vodSession.remux && video.error?.code === 4
+          ? 'El códec del vídeo no es compatible con este navegador. Prueba una versión H.264 o VP9.'
+          : 'La reproducción se interrumpió. Si ves imagen pero no escuchas, pulsa Audio compatible.', true);
       $('#retry-video').hidden = false;
       return;
     }
