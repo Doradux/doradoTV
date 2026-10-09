@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { createAddonsHandler } from '../netlify/functions/addons.js';
 import { safeJson, manifestUrl, normalizeManifest, resourceUrl, supports } from '../netlify/lib/stremio-addon.js';
 import { digest } from '../netlify/lib/room-security.js';
@@ -85,6 +86,7 @@ test('unsafe addon URLs and private DNS targets are rejected', async () => {
     assert.throws(() => manifestUrl(url));
   }
   assert.equal(manifestUrl('stremio://addon.test'), 'https://addon.test/manifest.json');
+  assert.equal(manifestUrl('stremio://thepiratebay-plus.strem.fun/manifest.json'), 'https://thepiratebay-plus.strem.fun/manifest.json');
   await assert.rejects(safeJson('https://internal.test/manifest.json', {
     resolver: async () => [{ address: '127.0.0.1', family: 4 }],
   }), { status: 403 });
@@ -99,4 +101,43 @@ test('Stremio resource filtering respects content types and id prefixes', () => 
   assert(!supports(normalized, 'stream', 'movie', 'imdb:123'));
   assert(!supports(normalized, 'stream', 'series', 'tt123'));
   assert(resourceUrl('https://addon.test/user/manifest.json', 'catalog', 'movie', 'test', { search: 'film' }).includes('/user/catalog/movie/test/search=film.json'));
+});
+
+test('stream-only Stremio manifest is valid without catalogs', () => {
+  const addon = normalizeManifest({
+    id: 'com.stremio.thepiratebay.plus', version: '1.4.0', name: 'ThePirateBay+',
+    description: 'Stream sources', resources: ['stream'], types: ['movie', 'series'],
+    catalogs: [], idPrefixes: ['tt'],
+  });
+  assert.equal(addon.catalogs.length, 0);
+  assert(supports(addon, 'stream', 'movie', 'tt1234567'));
+  assert(!supports(addon, 'catalog', 'movie', 'tt1234567'));
+});
+
+test('addon fetch retries alternate public DNS address for upstream 5xx', async () => {
+  const selected = [];
+  const transport = (_url, options, onResponse) => {
+    const req = new EventEmitter();
+    req.end = () => process.nextTick(() => {
+      options.lookup('addon.test', {}, (_, ip) => selected.push(ip));
+      const res = new EventEmitter();
+      res.statusCode = selected.length === 1 ? 503 : 200;
+      res.headers = {};
+      res.resume = () => {};
+      res.destroy = () => {};
+      onResponse(res);
+      if (res.statusCode === 200) {
+        res.emit('data', Buffer.from('{"ok":true}'));
+        res.emit('end');
+      }
+    });
+    req.destroy = (error) => req.emit('error', error);
+    return req;
+  };
+  const result = await safeJson('https://addon.test/manifest.json', {
+    resolver: async () => [{ address: '8.8.8.8', family: 4 }, { address: '1.1.1.1', family: 4 }],
+    transport,
+  });
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(selected, ['8.8.8.8', '1.1.1.1']);
 });

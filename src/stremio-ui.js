@@ -42,7 +42,7 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
         <div id="sa-addons" class="sa-addon-list"></div>
         <form id="sa-install" class="sa-install" hidden>
           <label for="sa-url">Instalar addon</label>
-          <input id="sa-url" type="url" placeholder="https://ejemplo.com/manifest.json" maxlength="1500" required autocomplete="off">
+          <input id="sa-url" type="text" inputmode="url" placeholder="https://ejemplo.com/manifest.json o stremio://..." maxlength="1500" required autocomplete="off" spellcheck="false">
           <button type="submit" class="sa-primary">${iconSvg(Plus, 'h-4 w-4')} Instalar</button>
           <small>Solo el propietario puede modificar los addons. Utiliza fuentes autorizadas y de confianza.</small>
         </form>
@@ -283,7 +283,15 @@ export function mountRoomAddons(app, session, { stopLive = () => {} } = {}) {
     event.preventDefault();
     const button = event.currentTarget.querySelector('button'), input = $('#sa-url');
     button.disabled = true; tell('Comprobando e instalando addon…');
-    try { await api(room, 'install', { url: input.value }); input.value = ''; await refresh(); tell('Addon instalado correctamente.'); }
+    try {
+      const url = input.value.trim().replace(/^stremio:\/\//i, 'https://');
+      const { addon } = await api(room, 'install', { url });
+      input.value = '';
+      await refresh();
+      tell(addon.manifest.catalogs.length
+        ? 'Addon instalado correctamente.'
+        : 'Addon instalado. Solo proporciona fuentes de reproducción; instala también un catálogo como Cinemeta para buscar películas y series.');
+    }
     catch (error) { tell(error.message); }
     finally { button.disabled = false; }
   };

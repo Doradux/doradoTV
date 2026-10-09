@@ -37,50 +37,70 @@ export async function safeJson(urlString, { resolver = lookup, transport = https
   try { resolved = await resolver(hostname, { all: true }); }
   catch { throw new RoomError('No se pudo resolver el addon.', 502); }
   if (!resolved?.length || resolved.some(({ address }) => !publicIp(address))) throw new RoomError('El addon apunta a una red no permitida.', 403);
-  const pin = resolved.find((entry) => entry.family === 4) || resolved[0];
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const fail = (error) => { if (!settled) { settled = true; reject(error instanceof RoomError ? error : new RoomError('El addon no responde.', 502)); } };
-    const req = transport(url, {
-      method: 'GET',
-      timeout: TIMEOUT,
-      maxRedirects: 0,
-      headers: { Accept: 'application/json', 'User-Agent': 'DoradoTV/1.0 Stremio-Addon-Client' },
-      lookup: (_hostname, options, callback) => callback(null, options?.all ? [pin] : pin.address, pin.family),
-    }, (res) => {
-      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
-        res.resume();
-        if (redirects >= 3) { fail(new RoomError('Demasiadas redirecciones del addon.', 502)); return; }
-        let target;
-        try { target = new URL(res.headers.location, url).href; } catch { fail(new RoomError('Redirección inválida del addon.', 502)); return; }
-        safeJson(target, { resolver, transport, redirects: redirects + 1 }).then((value) => {
-          if (!settled) { settled = true; resolve(value); }
-        }, fail);
-        return;
-      }
-      if (res.statusCode !== 200) { res.resume(); fail(new RoomError('El addon devolvió un error HTTP.', 502)); return; }
-      if (Number(res.headers['content-length']) > MAX_BYTES) { res.destroy(); fail(new RoomError('Respuesta del addon demasiado grande.', 502)); return; }
-      let length = 0;
-      const chunks = [];
-      res.on('data', (part) => {
-        length += part.length;
-        if (length > MAX_BYTES) { res.destroy(); fail(new RoomError('Respuesta del addon demasiado grande.', 502)); return; }
-        chunks.push(part);
+  // Retry one additional public IP on transient network or upstream 5xx errors.
+  // Preserve SSRF protections and do not retry upstream 4xx rejections.
+  const pins = [...resolved.filter((entry) => entry.family === 4), ...resolved.filter((entry) => entry.family === 6)].slice(0, 2);
+  let lastError;
+  for (const pin of pins) {
+    try {
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        const fail = (error) => { if (!settled) { settled = true; reject(error instanceof RoomError ? error : new RoomError('El addon no responde.', 502)); } };
+        const req = transport(url, {
+          method: 'GET',
+          timeout: TIMEOUT,
+          maxRedirects: 0,
+          headers: { Accept: 'application/json', 'User-Agent': 'DoradoTV/1.0 Stremio-Addon-Client' },
+          lookup: (_hostname, options, callback) => callback(null, options?.all ? [pin] : pin.address, pin.family),
+        }, (res) => {
+          if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+            res.resume();
+            if (redirects >= 3) { fail(new RoomError('Demasiadas redirecciones del addon.', 502)); return; }
+            let target;
+            try { target = new URL(res.headers.location, url).href; } catch { fail(new RoomError('Redirección inválida del addon.', 502)); return; }
+            safeJson(target, { resolver, transport, redirects: redirects + 1 }).then((value) => {
+              if (!settled) { settled = true; resolve(value); }
+            }, fail);
+            return;
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            const hint = res.statusCode === 404 ? ' Comprueba el enlace del manifiesto.'
+              : res.statusCode === 403 ? ' El proveedor ha rechazado la solicitud de DoradoTV.'
+              : res.statusCode >= 500 ? ' El servicio externo está fallando temporalmente.' : '';
+            const error = new RoomError('El addon respondió con HTTP ' + res.statusCode + '.' + hint, 502);
+            error.upstreamStatus = res.statusCode;
+            fail(error);
+            return;
+          }
+          if (Number(res.headers['content-length']) > MAX_BYTES) { res.destroy(); fail(new RoomError('Respuesta del addon demasiado grande.', 502)); return; }
+          let length = 0;
+          const chunks = [];
+          res.on('data', (part) => {
+            length += part.length;
+            if (length > MAX_BYTES) { res.destroy(); fail(new RoomError('Respuesta del addon demasiado grande.', 502)); return; }
+            chunks.push(part);
+          });
+          res.on('error', fail);
+          res.on('end', () => {
+            if (settled) return;
+            try {
+              const json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+              if (!json || typeof json !== 'object' || Array.isArray(json)) throw Error();
+              settled = true; resolve(json);
+            } catch { fail(new RoomError('El addon devolvió JSON inválido.', 502)); }
+          });
+        });
+        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('error', fail);
+        req.end();
       });
-      res.on('error', fail);
-      res.on('end', () => {
-        if (settled) return;
-        try {
-          const json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (!json || typeof json !== 'object' || Array.isArray(json)) throw Error();
-          settled = true; resolve(json);
-        } catch { fail(new RoomError('El addon devolvió JSON inválido.', 502)); }
-      });
-    });
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', fail);
-    req.end();
-  });
+    } catch (error) {
+      lastError = error;
+      if (error.upstreamStatus && error.upstreamStatus < 500) throw error;
+    }
+  }
+  throw lastError || new RoomError('El addon no responde.', 502);
 }
 
 const allowedType = (type) => type === 'movie' || type === 'series';
