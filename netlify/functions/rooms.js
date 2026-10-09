@@ -134,6 +134,12 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       }
       if (action === 'upload-chunk') return json(await service.uploadChunk(slug, who, input));
       if (action === 'upload-commit') return json(await service.commitUpload(slug, who, input));
+      if (action === 'torrent-start') {
+        await rateLimit(store, 'torrent-start:' + (who.sessionId || ip), 10, 600, clock?.());
+        return json(await service.startTorrent(slug, who, input.ticket));
+      }
+      if (['torrent-status', 'torrent-ping', 'torrent-stop'].includes(action))
+        return json(await service.torrentCommand(slug, who, action, input.id));
       if (action === 'start') { await rateLimit(store, `start:${who.sessionId || ip}`, 120, 300, clock?.()); return json(await service.start(slug, who, input)); }
       if (['ping', 'release', 'close'].includes(action)) return json(await service.playback(slug, who, input, action));
       throw new RoomError('Ruta no encontrada.', 404);

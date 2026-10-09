@@ -226,6 +226,27 @@ export class RoomsService {
     const rooms = await Promise.all((account.rooms || []).map((slug) => read(this.store, `room/${slug}`)));
     return rooms.filter((room) => room && !room.deleted && room.ownerId === account.id).map((room) => roomView(room, account));
   }
+  async startTorrent(slug, who, ticket) {
+    const room = await this.access(slug, who);
+    if (!who.sessionId) throw new RoomError('Inicia sesión para reproducir.', 401);
+    let payload;
+    try { payload = JSON.parse(unseal(ticket, 'torrent:' + slug + ':' + who.sessionId, this.env)); }
+    catch { throw new RoomError('La fuente de vídeo no es válida o ha caducado.', 403); }
+    if (payload.expires < this.clock() || payload.expires > this.clock() + 600 ||
+        !/^[a-f0-9]{40}$/.test(payload.hash) ||
+        (payload.fileIdx != null && (!Number.isSafeInteger(payload.fileIdx) || payload.fileIdx < 0 || payload.fileIdx > 10000)))
+      throw new RoomError('La fuente de vídeo ha caducado. Vuelve a seleccionar la fuente.', 403);
+    return this.relayFor(room).torrentStart(payload.hash, payload.fileIdx, who.sessionId);
+  }
+  async torrentCommand(slug, who, action, id) {
+    const room = await this.access(slug, who);
+    if (!/^[0-9a-f-]{36}$/i.test(id || '') || !who.sessionId) throw new RoomError('Sesión de vídeo no válida.', 400);
+    const relay = this.relayFor(room);
+    if (action === 'torrent-status') return relay.torrentStatus(id, who.sessionId);
+    if (action === 'torrent-ping') return relay.torrentPing(id, who.sessionId);
+    if (action === 'torrent-stop') return relay.torrentStop(id, who.sessionId);
+    throw new RoomError('Acción desconocida.', 400);
+  }
   async relayHealth(slug, who) {
     const room = await this.access(slug, who);
     return this.relayFor(room).health();

@@ -129,6 +129,35 @@ export function createRelayClient(input = null, fetcher = relayFetch) {
       }
       return { configured: true, ready: false };
     },
+    async torrentStart(hash, fileIdx, identity) {
+      try {
+        const data = await call('/torrent/start', 'POST', { info_hash: hash, file_idx: fileIdx, user_id: identity });
+        if (!/^[0-9a-f-]{36}$/i.test(data?.session_id || '')) throw new Error('Invalid torrent session');
+        return { id: data.session_id };
+      } catch (error) {
+        if (error.status === 404) throw new RoomError('Tu relay aún no admite torrents. Actualiza el despliegue del servicio en Northflank.', 503);
+        throw error;
+      }
+    },
+    async torrentStatus(id, identity) {
+      const result = await call('/torrent/status', 'POST', { session_id: id, user_id: identity });
+      if (!['loading', 'ready'].includes(result?.state)) throw new RoomError('Estado de torrent inválido.', 503);
+      if (result.state !== 'ready') return { state: 'loading' };
+      let video;
+      try { video = new URL(result.playback_url); }
+      catch { throw new RoomError('El relay devolvió un vídeo inválido.', 503); }
+      if (video.protocol !== 'https:' || video.origin !== cfg.url ||
+          !/^\/torrent-media\/[a-f0-9-]{36}\/video$/.test(video.pathname))
+        throw new RoomError('URL de torrent no autorizada.', 503);
+      return { state: 'ready', url: video.href, peers: Number(result.peers) || 0 };
+    },
+    async torrentPing(id, identity) {
+      return call('/torrent/ping', 'POST', { session_id: id, user_id: identity });
+    },
+    async torrentStop(id, identity) {
+      try { return await call('/torrent/stop', 'POST', { session_id: id, user_id: identity }); }
+      catch (error) { if (error.status === 404 || error.status === 410) return { ok: true }; throw error; }
+    },
     async start(channel, identity, tab) {
       const result = await call('/start', 'POST', { channel: { name: channel.name, url: channel.url },
         user_id: identity, name: channel.viewerName, tab });

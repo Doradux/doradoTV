@@ -36,6 +36,12 @@ A relay accepts one upstream HTTP connection per distinct channel URL, convertin
 
 The previous relay was hosted on Northflank under a code.run domain. Find its address in Northflank service → Ports/Networking, and its key in the service's environment variables. Your old global Netlify DORADO_RELAY_URL and DORADO_RELAY_SECRET may still exist for retrieval, but they are ignored by the new version. Copy the values before deleting them.
 
+### Server torrent streaming and resource limits
+
+Torrent sources with valid info hashes play through the **room's own relay** using traditional BitTorrent TCP/UDP peers, instead of browser-only WebRTC peers. Room permissions are checked first; addon source capabilities expire after 10 minutes, and each viewer receives a short-lived HTTP media token. The same HTML5 player supports seeking through byte ranges and episode navigation.
+
+To protect small Northflank instances, server torrents are limited by default to **one active swarm, 12 peers, 700 MiB per selected video, 4 MiB/s download and 256 KiB/s upload**. Larger videos show a capacity error: the server never silently downloads multi-gigabyte videos on a 1 GB instance. Increase the relay disk/RAM and then DORADO_TORRENT_MAX_BYTES before selecting larger files. Only browser-compatible MP4/WebM/OGG files are accepted; MKV and unsupported codecs require a separate transcoding system. Playback requires reachable TCP/UDP peers, and temporary caches expire when no one watches.
+
 ### Responsible use and legal notices
 
 Use only authorized M3U channels, addons and media. The [Responsible use and notices page](/legal.html) provides a report form when DORADO_REPORT_EMAIL and valid SMTP settings have been configured. Content is not proactively inspected. Disclaimer text cannot grant automatic legal immunity: applicable obligations and protections depend on actual service functions, use and response to valid complaints. Seek legal advice before opening a public service.
@@ -194,3 +200,9 @@ Las credenciales se cifran por sala (AES-256-GCM) y no se muestran a invitados. 
 Tu relay original estaba alojado en Northflank, mediante un dominio code.run. Busca el servicio en Northflank → Ports/Networking y su variable DORADO_RELAY_SECRET en Environment variables. También puedes consultar los valores anteriores en las variables de entorno del proyecto Netlify antes de eliminarlas. No compartas la clave privada con otros propietarios.
 
 El relay comparte una conexión del proveedor entre espectadores de una misma URL HTTP. Los canales HTTPS directos siguen reproduciéndose sin atravesar el relay y no tienen esa deduplicación.
+
+### Torrents en el relay privado
+
+Cada sala utiliza su propio relay para conectar a seeders BitTorrent TCP/UDP tradicionales. Netlify valida la fuente y la sesión antes de permitir la reproducción. El navegador recibe el vídeo mediante HTTP con soporte de solicitudes Range, sin buscar pares WebRTC. Al cerrar la reproducción se liberan las sesiones y se eliminan los archivos temporales después de un periodo sin espectadores.
+
+**Límites por defecto:** un torrent activo, 12 pares, máximo de **700 MiB por archivo de vídeo**, descarga de 4 MiB/s y subida de 256 KiB/s. Para películas más grandes necesitas ampliar primero el almacenamiento y la memoria de Northflank y después ajustar DORADO_TORRENT_MAX_BYTES. Las películas MKV y los códecs no admitidos por el navegador no se transcodifican automáticamente. La reproducción requiere seeders TCP/UDP accesibles.

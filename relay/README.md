@@ -57,3 +57,15 @@ Cada sala necesita una instancia propia de este servidor, una URL HTTPS diferent
 Netlify ya no necesita DORADO_RELAY_URL ni DORADO_RELAY_SECRET globales: esas variables antiguas dejan de funcionar como configuración por defecto. NO las elimines antes de recuperar los valores para tu sala.
 
 Un relay admite múltiples espectadores de la misma URL HTTP usando una sola entrada FFmpeg. Las señales HTTPS directas no pasan por este relay.
+
+## Torrents desde el relay
+
+Cada instancia admite reproducción de torrents mediante WebTorrent en Node.js, con conexión a pares BitTorrent TCP/UDP y trackers públicos. DoradoTV comprueba que la fuente procede de un addon autorizado y que el usuario pertenece a la sala; el relay reutiliza el mismo torrent para todos los espectadores del mismo archivo. Sirve el vídeo mediante HTTP Range en el reproductor habitual. Los tokens de vídeo son temporales y cada torrent se elimina cuando ya no queda nadie viéndolo.
+
+En instancias pequeñas de Northflank (512 MB RAM y 1 GB de almacenamiento) se recomienda esta configuración conservadora:
+
+- DORADO_TORRENT_MAX_BYTES=734003200 (700 MiB por vídeo)
+- DORADO_TORRENT_MAX_ACTIVE=1 (un torrent simultáneo por relay)
+- 12 conexiones BitTorrent, 4 MiB/s de descarga y 256 KiB/s de subida (límites internos)
+
+Para películas mayores primero amplía el almacenamiento y la RAM y después sube DORADO_TORRENT_MAX_BYTES. El servidor no transcodifica MKV ni códecs no compatibles con HTML5, porque supondría un gasto de CPU considerable. La descarga torrent no se inicia hasta que un espectador elige una fuente.

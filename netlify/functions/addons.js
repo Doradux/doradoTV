@@ -138,7 +138,12 @@ export function createAddonsHandler({ getStore = roomStore, env = process.env, f
           }
         }));
         if (action === 'streams') return json({
-          streams: results.flatMap(({ items }) => items).slice(0, 80),
+          streams: results.flatMap(({ items }) => items).slice(0, 80).map((item) =>
+            item.kind === 'torrent' && item.infoHash && who.sessionId
+              ? { ...item, ticket: seal(JSON.stringify({
+                hash: item.infoHash, fileIdx: item.fileIdx, expires: clock() + 600,
+              }), 'torrent:' + slug + ':' + who.sessionId, env) }
+              : item),
           warnings: results.flatMap(({ warning }) => warning ? [warning] : []),
         });
         return json({ subtitles: results.flatMap(({ items }) => items).slice(0, 80) });

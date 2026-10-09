@@ -6,6 +6,7 @@ import ipaddr from 'ipaddr.js';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { RelayRegistry } from './registry.js';
+import { TorrentRelay, TorrentFault } from './torrent-service.js';
 
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
@@ -93,7 +94,9 @@ async function body(request) {
   return JSON.parse(content || '{}');
 }
 
-export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnections = 3, ffmpeg = 'ffmpeg', spawnProcess = spawn, resolveChannel = resolveHttpChannel, clock = () => Math.floor(Date.now() / 1000) }) {
+export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnections = 3, ffmpeg = 'ffmpeg',
+  spawnProcess = spawn, resolveChannel = resolveHttpChannel, clock = () => Math.floor(Date.now() / 1000),
+  torrentFactory, torrentMaxBytes = 700 * 1024 * 1024, torrentMaxActive = 1 }) {
   const missing = [];
   if (!directory) missing.push('DORADO_RELAY_DIR');
   if (!secret) missing.push('DORADO_RELAY_SECRET');
@@ -114,6 +117,9 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   writeFileSync(lock, String(process.pid));
   closeSync(lock);
   const processes = new Map();
+  const torrents = torrentFactory || new TorrentRelay({
+    directory, maxBytes: torrentMaxBytes, maxActive: torrentMaxActive,
+  });
   const now = clock;
   let configuredOrigin = null;
   if (publicUrl) {
@@ -209,6 +215,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   }
 
   function tick() {
+    torrents.tick();
     registry.transaction((state) => {
       state.worker_seen = now();
       for (const [id, session] of Object.entries(state.sessions)) if (now() - session.last_seen > SESSION_TTL) delete state.sessions[id];
@@ -284,9 +291,43 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, mediaOrigin);
     const cors = getCors(request);
-    if (request.method === 'OPTIONS' && url.pathname.startsWith('/media/')) {
+    if (request.method === 'OPTIONS' && (url.pathname.startsWith('/media/') || url.pathname.startsWith('/torrent-media/'))) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       response.writeHead(204, cors); response.end(); return;
+    }
+    const torrentMedia = url.pathname.match(/^\/torrent-media\/([0-9a-f-]{36})\/video$/);
+    if (torrentMedia && (request.method === 'GET' || request.method === 'HEAD')) {
+      if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
+      let file;
+      try { file = torrents.media(torrentMedia[1], url.searchParams.get('token'), request.headers.range); }
+      catch (error) {
+        const status = error instanceof TorrentFault ? error.status : 503;
+        json(response, status, { error: error.message }, cors); return;
+      }
+      const contentType = /\.webm$/i.test(file.name || '') ? 'video/webm' : /\.ogg$/i.test(file.name || '') ? 'video/ogg' : 'video/mp4';
+      const headers = {
+        ...cors, 'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
+        'Content-Type': contentType, 'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff', 'Accept-Ranges': 'bytes',
+        'Content-Length': String(file.end - file.start + 1),
+        ...(file.partial ? { 'Content-Range': 'bytes ' + file.start + '-' + file.end + '/' + file.length } : {}),
+      };
+      response.writeHead(file.partial ? 206 : 200, headers);
+      if (request.method === 'HEAD') { response.end(); return; }
+      const stream = file.stream();
+      let stalled = null;
+      const resetTimeout = () => {
+        clearTimeout(stalled);
+        stalled = setTimeout(() => response.destroy(new Error('Torrent stream stalled')), 35000);
+        stalled.unref?.();
+      };
+      resetTimeout();
+      stream.on('data', resetTimeout);
+      stream.on('end', () => clearTimeout(stalled));
+      stream.on('error', () => { clearTimeout(stalled); response.destroy(); });
+      response.on('close', () => { clearTimeout(stalled); stream.destroy(); });
+      stream.pipe(response);
+      return;
     }
     const match = url.pathname.match(/^\/media\/([0-9a-f-]{36})\/(index\.m3u8|segment_[0-9]{9,}\.ts)$/);
     if (['GET', 'HEAD'].includes(request.method) && match) {
@@ -331,7 +372,9 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       }
       return;
     }
-    if (request.method === 'GET' && url.pathname === '/health') { json(response, 200, { ok: true }); return; }
+    if (request.method === 'GET' && url.pathname === '/health') {
+      json(response, 200, { ok: true, torrent: { supported: true, maxFileBytes: torrentMaxBytes } }); return;
+    }
     if (!sameSecret(request.headers.authorization?.replace(/^Bearer /, ''), secret)) { json(response, 401, { error: 'No autorizado.' }); return; }
     try {
       if (request.method === 'GET' && url.pathname === '/status') {
@@ -342,6 +385,23 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
           users: Object.values(state.sessions).filter((session) => session.emission_id === emission.id).map((session) => ({ name: session.name, user_id: session.user_id })),
         }));
         json(response, 200, { max_connections: maxConnections, active_count: active.length, local_count: active.length, viewer_count: Object.keys(state.sessions).length, connections }); return;
+      }
+      if (request.method === 'POST' && url.pathname === '/torrent/start') {
+        const requestData = await body(request);
+        json(response, 200, await torrents.start(requestData)); return;
+      }
+      if (request.method === 'POST' && url.pathname === '/torrent/status') {
+        const input = await body(request);
+        json(response, 200, torrents.status(input.session_id, normalizeUserId(input.user_id), requestOrigin(request))); return;
+      }
+      if (request.method === 'POST' && url.pathname === '/torrent/ping') {
+        const input = await body(request);
+        torrents.auth(input.session_id, normalizeUserId(input.user_id));
+        json(response, 200, { ok: true }); return;
+      }
+      if (request.method === 'POST' && url.pathname === '/torrent/stop') {
+        const input = await body(request);
+        json(response, 200, torrents.stop(input.session_id, normalizeUserId(input.user_id))); return;
       }
       if (request.method === 'POST' && url.pathname === '/start') {
         const { channel, user_id: rawUserId, name, tab } = await body(request);
@@ -403,10 +463,12 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       }
       json(response, 404, { error: 'Ruta no encontrada.' });
     } catch (error) {
-      json(response, error instanceof SyntaxError || /inválid|demasiado grande/.test(error.message) ? 400 : 503, { error: error.message });
+      json(response, error instanceof TorrentFault ? error.status :
+        error instanceof SyntaxError || /inválid|demasiado grande/.test(error.message) ? 400 : 503,
+      { error: error.message });
     }
   });
-  return { server, registry, tick, stop() { for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
+  return { server, registry, torrents, tick, stop() { torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
@@ -423,6 +485,8 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     appOrigin: process.env.DORADO_APP_ORIGIN,
     maxConnections: Number(process.env.DORADO_MAX_CONNECTIONS || 3),
     ffmpeg: process.env.DORADO_FFMPEG || 'ffmpeg',
+    torrentMaxBytes: Math.min(8 * 1024 ** 3, Math.max(100 * 1024 ** 2, Number(process.env.DORADO_TORRENT_MAX_BYTES) || 700 * 1024 ** 2)),
+    torrentMaxActive: Math.min(3, Math.max(1, Number(process.env.DORADO_TORRENT_MAX_ACTIVE) || 1)),
   });
   const interval = setInterval(relay.tick, 1000);
   const host = process.env.HOST || (managedRuntime ? '0.0.0.0' : '127.0.0.1');
