@@ -177,6 +177,9 @@ function mountPlayer(session, account) {
 
   let vodSession = null;
   let vodNavigation = {};
+  let torrentSessionId = null;
+  let torrentHeartbeat = null;
+  let torrentWait = null;
   let torrentClient = null;
   let torrentTimeout = null;
   let playbackSource = '';
@@ -266,6 +269,13 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    if (torrentWait) { clearTimeout(torrentWait.id); torrentWait.resolve(); torrentWait = null; }
+    if (torrentHeartbeat) { clearInterval(torrentHeartbeat); torrentHeartbeat = null; }
+    if (torrentSessionId) {
+      const id = torrentSessionId;
+      torrentSessionId = null;
+      inRoom('torrent-stop', { data: { id }, keepalive: true }).catch(() => {});
+    }
     if (torrentClient) { const old = torrentClient; torrentClient = null; old.destroy(() => {}); }
     vodSession = null;
     vodNavigation = {};
@@ -423,15 +433,35 @@ function mountPlayer(session, account) {
     setStatus('Preparando reproducción…');
     try {
       if (source.kind === 'torrent') {
-        const { startBrowserTorrent } = await import('./torrent-playback.js');
+        if (!source.ticket) throw Error('Fuente torrent sin autorización. Vuelve a buscar el título.');
+        setStatus('Conectando con el motor BitTorrent de esta sala…');
+        const started = await inRoom('torrent-start', { data: { ticket: source.ticket } });
+        if (token !== playbackToken) {
+          inRoom('torrent-stop', { data: { id: started.id }, keepalive: true }).catch(() => {});
+          return;
+        }
+        torrentSessionId = started.id;
+        let ready = null;
+        const until = Date.now() + 70000;
+        while (token === playbackToken && Date.now() < until) {
+          ready = await inRoom('torrent-status', { data: { id: started.id } });
+          if (ready.state === 'ready') break;
+          setStatus('Buscando pares y metadatos BitTorrent…');
+          await new Promise((resolve) => {
+            const id = setTimeout(resolve, 1900);
+            torrentWait = { id, resolve };
+          });
+          torrentWait = null;
+        }
         if (token !== playbackToken) return;
-        const torrent = await startBrowserTorrent(video, source, {
-          onStatus: (message) => { if (token === playbackToken) setStatus(message); },
-          isCurrent: () => token === playbackToken,
-        });
-        if (token !== playbackToken) { torrent.client.destroy(() => {}); return; }
-        torrentClient = torrent.client;
-        await torrent.ready;
+        if (ready?.state !== 'ready') throw Error('No se encontraron pares BitTorrent a tiempo. Prueba otra fuente.');
+        video.src = ready.url;
+        setStatus('Preparando vídeo desde el relay…');
+        torrentHeartbeat = setInterval(() => {
+          if (token === playbackToken && torrentSessionId) {
+            inRoom('torrent-ping', { data: { id: torrentSessionId } }).catch(() => {});
+          }
+        }, 20000);
       } else if (source.url) {
         const path = new URL(source.url).pathname.toLowerCase();
         if (path.endsWith('.m3u8') && !video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -462,6 +492,13 @@ function mountPlayer(session, account) {
       if (token !== playbackToken) return;
       // Failed torrent attempts must not leave swarm connections or SW streams
       // alive while the user chooses a new source or clicks Retry.
+      if (source.kind === 'torrent' && torrentSessionId) {
+        const id = torrentSessionId;
+        torrentSessionId = null;
+        clearInterval(torrentHeartbeat); torrentHeartbeat = null;
+        inRoom('torrent-stop', { data: { id }, keepalive: true }).catch(() => {});
+        video.pause(); video.removeAttribute('src'); video.load();
+      }
       if (source.kind === 'torrent' && torrentClient) {
         const client = torrentClient;
         torrentClient = null;

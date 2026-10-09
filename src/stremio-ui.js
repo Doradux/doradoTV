@@ -165,6 +165,7 @@ export function mountRoomAddons(app, session, { player }) {
     if (!source || !state.current) return;
     if (source.kind !== 'torrent' && !source.supported) { say('Formato no reproducible en el navegador.', true); return; }
     if (source.kind === 'torrent' && !source.infoHash) { say('La fuente torrent no contiene un identificador válido.', true); return; }
+    if (source.kind === 'torrent' && !source.ticket) { say('No se pudo autorizar este torrent. Actualiza la búsqueda.', true); return; }
     $('#sa-streams').querySelectorAll('[data-source]').forEach((b) =>
       b.setAttribute('aria-pressed', String(Number(b.dataset.source) === index)));
     const title = state.current.type === 'series'
