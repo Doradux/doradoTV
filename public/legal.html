@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Uso responsable y notificaciones · DoradoTV</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark;background:#090b10;color:#eef0f5}
+    body{margin:0;padding:22px;line-height:1.65}
+    [hidden]{display:none!important}
+    main{max-width:760px;margin:25px auto 100px}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:45px}
+    header img{height:49px;width:49px;object-fit:contain}
+    a{color:#eac67f}
+    .back{margin-left:auto}
+    h1{font-size:clamp(24px,4vw,38px);line-height:1.16}
+    h2{margin-top:35px;font-size:20px}
+    p,li{color:#b7bfcd}
+    form{display:grid;gap:15px;padding:22px;border:1px solid #ffffff23;border-radius:16px;background:#161a23}
+    label{display:grid;gap:7px;font-size:13px;font-weight:650}
+    input,select,textarea{width:100%;box-sizing:border-box;padding:11px;background:#0b0e15;color:#fff;border:1px solid #5d6473;border-radius:9px;font:inherit}
+    textarea{min-height:135px;resize:vertical}
+    button{width:max-content;padding:11px 17px;border:0;border-radius:9px;background:#edc575;color:#130f09;font-weight:750;cursor:pointer}
+    button:disabled{opacity:.5;cursor:wait}
+    .small{font-size:12px}
+    #report-status{min-height:20px;color:#f1ca80}
+    #report-availability{font-size:13px;color:#c6a67b}
+  </style>
+</head>
+<body>
+<main>
+  <header><img src="/favicon.svg" alt=""><strong>DoradoTV</strong><a class="back" href="/">Volver a la aplicación</a></header>
+  <h1>Uso responsable, contenidos de terceros y notificaciones</h1>
+  <p>DoradoTV es una herramienta de salas privadas para reproducir fuentes y explorar complementos que configuran las personas usuarias. El software no garantiza la titularidad, autenticidad ni las licencias de las fuentes externas.</p>
+  <h2>Contenido que aportan las personas usuarias</h2>
+  <p>Quien incorpora una lista M3U, un addon o una fuente es responsable de disponer de los permisos necesarios para su utilización y comunicación. No deben añadirse materiales que vulneren derechos de terceros, la legislación aplicable o condiciones contractuales. Los titulares de salas pueden eliminar listas, addons y salas.</p>
+  <p>La aplicación guarda información de salas y listas M3U de forma cifrada para su funcionamiento; determinadas emisiones HTTP pueden atravesar un servidor relay. La arquitectura técnica, las decisiones de los operadores y el conocimiento y actuaciones ante avisos concretos pueden ser relevantes para determinar responsabilidades.</p>
+  <h2>Notificaciones de posibles contenidos ilícitos</h2>
+  <p>Puedes comunicar una presunta infracción identificando la sala o el recurso concreto y explicando por qué consideras ilícito el contenido. La comunicación se dirige a la dirección de avisos que haya configurado el responsable del despliegue. El envío de un aviso no implica retirada automática ni confirma que exista infracción.</p>
+  <p id="report-availability">Comprobando disponibilidad del canal de avisos…</p>
+  <form id="report-form" hidden>
+    <label>Tipo de aviso
+      <select name="category" required>
+        <option value="copyright">Propiedad intelectual / derechos de autor</option>
+        <option value="illegal">Otro contenido presuntamente ilícito</option>
+        <option value="other">Consulta relacionada con contenidos</option>
+      </select>
+    </label>
+    <label>Sala (nombre único, si se conoce)
+      <input name="room" maxlength="40" pattern="[a-zA-Z0-9][a-zA-Z0-9-]{2,39}" placeholder="sala-de-ejemplo">
+    </label>
+    <label>Recurso concreto (canal, título o addon)
+      <input name="resource" maxlength="300" placeholder="Nombre del canal o recurso denunciado">
+    </label>
+    <label>Correo de contacto
+      <input name="email" type="email" maxlength="254" autocomplete="email" required>
+    </label>
+    <label>Motivo y descripción (20–4000 caracteres)
+      <textarea name="details" minlength="20" maxlength="4000" required placeholder="Identifica el contenido, dónde aparece y qué derecho se considera afectado."></textarea>
+    </label>
+    <button type="submit">Enviar aviso</button>
+    <p id="report-status" role="status" aria-live="polite"></p>
+    <p class="small">Tu mensaje y dirección de contacto se transmitirán al correo de gestión de avisos configurado, con la finalidad de evaluar y responder a la notificación. No incluyas contraseñas ni datos innecesarios de terceros.</p>
+  </form>
+  <h2>Acceso e historial</h2>
+  <p>Una cuenta autenticada puede guardar nombres de salas ajenas a las que ha entrado, exclusivamente para facilitar futuras visitas. Esto no otorga permisos, ni revela sus listas, ni guarda sus contraseñas. Cada usuario puede quitar una sala de su historial. La existencia de un enlace no implica autorización para acceder.</p>
+  <h2>Marco jurídico</h2>
+  <p>Las limitaciones de responsabilidad que puedan corresponder a un servicio intermediario dependen de sus funciones reales y de cómo se actúe ante contenidos ilícitos. Un aviso legal no sustituye el cumplimiento de obligaciones ni concede inmunidad. Referencias: <a href="https://www.boe.es/buscar/act.php?id=BOE-A-2002-13758" target="_blank" rel="noopener noreferrer">LSSI (España)</a> y <a href="https://www.boe.es/buscar/doc.php?id=DOUE-L-2022-81573" target="_blank" rel="noopener noreferrer">Reglamento de Servicios Digitales (UE)</a>.</p>
+</main>
+<script>
+  const form = document.querySelector('#report-form');
+  const availability = document.querySelector('#report-availability');
+  fetch('/.netlify/functions/rooms?action=config', { credentials: 'same-origin' })
+    .then((response) => response.json())
+    .then((config) => {
+      if (config.noticeReporting) {
+        form.hidden = false;
+        availability.textContent = 'Canal de notificaciones disponible.';
+      } else {
+        availability.textContent = 'El responsable del despliegue todavía no ha configurado su correo de notificaciones. Este formulario no está disponible.';
+      }
+    })
+    .catch(() => { availability.textContent = 'No se pudo comprobar la disponibilidad. Inténtalo más tarde.'; });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button'), status = form.querySelector('#report-status');
+    button.disabled = true;
+    status.textContent = 'Enviando aviso…';
+    try {
+      const response = await fetch('/.netlify/functions/rooms?action=report', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(new FormData(form))),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Error al enviar el aviso.');
+      form.reset();
+      status.textContent = 'Aviso enviado al correo de gestión.';
+    } catch (error) {
+      status.textContent = error.message;
+    } finally { button.disabled = false; }
+  });
+</script>
+</body>
+</html>
+

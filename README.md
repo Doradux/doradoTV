@@ -96,3 +96,22 @@ La sala tiene un selector entre **Lista de canales** y **Cine y series**. El acc
 En las series puede seleccionarse temporada y episodio si un addon de metadatos aporta la lista de episodios. Las fuentes se pueden ordenar por seeders cuando estos están disponibles y elegir individualmente. Las fuentes directas HTTPS compatibles pueden reproducirse en el navegador; los torrents no se reproducen desde Netlify y requieren abrir la fuente magnet en un cliente externo. El número de seeders representa la cantidad indicada por el proveedor, **no** un peer individual al que se pueda conectar desde el navegador.
 
 El favicon y los iconos instalables comparten el nuevo logotipo transparente `public/favicon.svg` (sin fondo), con variantes PNG también transparentes.
+
+## Historial de salas y recuperación de vídeo
+
+- **Mis salas** separa salas propias y salas ajenas visitadas. Solo se añade una sala tras entrar correctamente con contraseña **mientras la cuenta esté iniciada** (sesión de Google, por ejemplo); no se asocian retroactivamente entradas anónimas. Se conservan hasta 40 referencias a salas recientes en la cuenta, nunca contraseñas ni listas de terceros. El usuario puede quitarlas del historial.
+- Al volver a una sala ajena, si la sesión actual ya no permite entrar, se solicita la contraseña normalmente. Estar en el historial **no** concede acceso persistente ni permisos de propietario. Salas eliminadas no se listan.
+- El botón de reproducción M3U se bloquea y muestra progreso mientras establece una conexión; errores de vídeo y HLS muestran una acción explícita **Reintentar conexión**. La selección de canal desplaza suavemente la página al principio.
+
+## Avisos de contenido y límites de responsabilidad
+
+La página pública /legal.html expone las normas de uso y, solo cuando hay un correo operativo configurado, un formulario de avisos concretos. Los avisos son enviados por correo; no se rastrean automáticamente listas, canales ni complementos. La función valida los datos y limita envíos por IP. No se ha configurado un buzón por defecto para evitar mostrar información privada o simular recepción de avisos.
+
+Para activar el formulario en producción configura **todas** estas variables en Netlify y despliega de nuevo:
+
+- DORADO_REPORT_EMAIL: dirección real donde se recibirán y tramitarán las notificaciones.
+- SMTP_USER, SMTP_PASSWORD y, si procede, SMTP_HOST y SMTP_PORT: credenciales válidas del servidor de correo de salida. Usa una cuenta dedicada con contraseña de aplicación.
+
+Prueba el formulario con un aviso de ejemplo controlado y revisa que el mensaje llegue; el test automatizado no envía email real. Los avisos legítimos deben revisarse y gestionarse diligentemente. Es recomendable disponer de un procedimiento para retirar o deshabilitar con rapidez las listas, addons o accesos concretos cuando corresponda, conservar el registro de las actuaciones pertinentes y facilitar el contacto a titulares de derechos y autoridades.
+
+**Importante:** Estas medidas no otorgan exoneración automática. El encaje jurídico de un servicio con M3U, búsqueda de addons y, en ciertos casos, relay de emisiones depende de sus funciones efectivas y del uso, así como de la legislación aplicable. La LSSI española y el Reglamento de Servicios Digitales de la UE incluyen exenciones condicionadas y obligaciones específicas; consulta asesoramiento jurídico antes de abrir el proyecto a terceros fuera de tu entorno de confianza.

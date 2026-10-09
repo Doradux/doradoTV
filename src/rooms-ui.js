@@ -111,18 +111,50 @@ export async function mountPortal(app, config, initial = {}) {
 }
 
 export async function mountDashboard(app, account) {
-  app.innerHTML = `<div class="app-shell rooms-dashboard"><header class="app-header">${brand}<div class="header-actions"><span class="account-name">${escapeHtml((account.username || account.name))}</span><button id="account-logout" class="icon-button" aria-label="Cerrar sesión">${iconSvg(LogOut)}</button></div></header><main><div class="dashboard-heading"><div><h1>Mis salas</h1></div><button id="create-open" class="primary-button">${iconSvg(Plus)} Crear sala</button></div><section id="create-panel" class="room-create-panel hidden" aria-labelledby="create-title"><div><h2 id="create-title">Nueva sala</h2><p>Hasta 3 salas por cuenta. La contraseña de la sala es independiente de la de tu cuenta.</p></div><form id="create-room" class="room-form"><label>Título de la sala<input name="title" required maxlength="60" placeholder="La tele de casa" /></label><label>Nombre único<input name="slug" required pattern="[a-z0-9][a-z0-9-]{2,39}" minlength="3" maxlength="40" autocapitalize="none" spellcheck="false" placeholder="la-tele-de-casa" /><small>Solo letras minúsculas, números y guiones.</small></label><label>Contraseña para invitados<input name="password" type="password" required minlength="10" maxlength="128" autocomplete="new-password" placeholder="Al menos 10 caracteres" /></label><p class="form-message" id="create-message" role="status"></p><button type="submit" class="primary-button">Crear sala ${iconSvg(ArrowRight)}</button></form></section><div id="rooms-grid" class="rooms-grid" aria-live="polite"><p class="list-empty">Cargando tus salas…</p></div><p class="dashboard-footnote">Tus invitados solo necesitan el nombre de la sala y su contraseña.</p><a class="text-link" href="/?join=1">Entrar en otra sala como invitado ${iconSvg(ArrowRight, 'h-4 w-4')}</a></main></div>`;
+  app.innerHTML = `<div class="app-shell rooms-dashboard"><header class="app-header">${brand}<div class="header-actions"><span class="account-name">${escapeHtml((account.username || account.name))}</span><button id="account-logout" class="icon-button" aria-label="Cerrar sesión">${iconSvg(LogOut)}</button></div></header><main><div class="dashboard-heading"><div><h1>Mis salas</h1></div><button id="create-open" class="primary-button">${iconSvg(Plus)} Crear sala</button></div><section id="create-panel" class="room-create-panel hidden" aria-labelledby="create-title"><div><h2 id="create-title">Nueva sala</h2><p>Hasta 3 salas por cuenta. La contraseña de la sala es independiente de la de tu cuenta.</p></div><form id="create-room" class="room-form"><label>Título de la sala<input name="title" required maxlength="60" placeholder="La tele de casa" /></label><label>Nombre único<input name="slug" required pattern="[a-z0-9][a-z0-9-]{2,39}" minlength="3" maxlength="40" autocapitalize="none" spellcheck="false" placeholder="la-tele-de-casa" /><small>Solo letras minúsculas, números y guiones.</small></label><label>Contraseña para invitados<input name="password" type="password" required minlength="10" maxlength="128" autocomplete="new-password" placeholder="Al menos 10 caracteres" /></label><p class="form-message" id="create-message" role="status"></p><button type="submit" class="primary-button">Crear sala ${iconSvg(ArrowRight)}</button></form></section><div id="rooms-grid" class="rooms-grid" aria-live="polite"><p class="list-empty">Cargando tus salas…</p></div><section class="visited-section" aria-labelledby="visited-heading">
+  <div class="visited-heading"><div><h2 id="visited-heading">Salas visitadas</h2><p>Salas de otros propietarios a las que has entrado con tu cuenta. Para volver a entrar puede ser necesaria la contraseña.</p></div></div>
+  <div id="visited-grid" class="rooms-grid visited-grid" aria-live="polite"><p class="visited-empty">Cargando tu historial…</p></div>
+  <p id="visited-status" class="form-message" role="status"></p>
+</section>
+<p class="dashboard-footnote">El historial no otorga permisos sobre salas ajenas ni almacena contraseñas de sala.</p><a class="text-link" href="/?join=1">Entrar en otra sala como invitado ${iconSvg(ArrowRight, 'h-4 w-4')}</a></main></div>`;
   app.querySelector('#account-logout').onclick = async () => { await roomApi('logout', { data: {} }); navigateRoom(); };
   app.querySelector('#create-open').onclick = () => { const panel = app.querySelector('#create-panel'); panel.classList.toggle('hidden'); if (!panel.classList.contains('hidden')) panel.querySelector('input').focus(); };
+  app.querySelector('#visited-grid').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-forget-visited]');
+    if (!button) return;
+    const slug = button.dataset.forgetVisited;
+    button.disabled = true;
+    try {
+      await roomApi('forget-visited', { room: slug, data: {} });
+      button.closest('.visited-card')?.remove();
+      if (!app.querySelector('#visited-grid .visited-card')) app.querySelector('#visited-grid').innerHTML =
+        '<p class="visited-empty">Ya no quedan salas en el historial.</p>';
+      app.querySelector('#visited-status').textContent = '';
+    } catch (error) {
+      button.disabled = false;
+      app.querySelector('#visited-status').textContent = error.message;
+    }
+  });
   app.querySelector('#create-room').onsubmit = async (event) => {
     event.preventDefault(); const button = event.currentTarget.querySelector('button'); button.disabled = true;
     try { const room = await roomApi('create', { data: Object.fromEntries(new FormData(event.currentTarget)) }); navigateRoom(room.slug); }
     catch (error) { app.querySelector('#create-message').textContent = error.message; button.disabled = false; }
   };
   try {
-    const { rooms } = await roomApi('mine');
+    const { rooms, visited = [] } = await roomApi('mine');
     app.querySelector('#create-open').disabled = rooms.length >= 3;
     app.querySelector('#rooms-grid').innerHTML = rooms.length ? rooms.map((room, index) => `<a class="room-card" href="/?room=${encodeURIComponent(room.slug)}" style="--row-delay:${index * 60}ms"><div class="room-card-top"><span class="room-card-icon">${iconSvg(TvMinimal, 'h-6 w-6')}</span><span class="room-private">${iconSvg(LockKeyhole, 'h-3 w-3')} Privada</span></div><h2>${escapeHtml(room.title)}</h2><p class="room-slug">${escapeHtml(room.slug)}</p><div class="room-card-bottom"><span>${room.channelCount ? `${room.channelCount.toLocaleString('es')} canales` : 'Lista pendiente de subir'}</span>${iconSvg(ArrowRight)}</div></a>`).join('') : `<div class="rooms-empty"><span class="empty-icon">${iconSvg(DoorOpen, 'h-9 w-9')}</span><h2>No has creado ninguna sala.</h2></div>`;
+    const history = visited.filter((item) => !rooms.some((owned) => owned.slug === item.slug));
+    app.querySelector('#visited-grid').innerHTML = history.length ? history.map((item, index) => `
+      <div class="visited-card">
+        <a class="room-card" href="/?room=${encodeURIComponent(item.slug)}" style="--row-delay:${index * 40}ms">
+          <div class="room-card-top"><span class="room-card-icon">${iconSvg(DoorOpen, 'h-6 w-6')}</span>
+            <span class="room-private">${iconSvg(LockKeyhole, 'h-3 w-3')} Invitado</span></div>
+          <h2>${escapeHtml(item.title)}</h2><p class="room-slug">${escapeHtml(item.slug)}</p>
+          <div class="room-card-bottom"><span>Volver a entrar</span>${iconSvg(ArrowRight)}</div>
+        </a>
+        <button type="button" class="visited-remove" data-forget-visited="${escapeHtml(item.slug)}" aria-label="Quitar ${escapeHtml(item.title)} del historial">Quitar del historial</button>
+      </div>`).join('') : '<p class="visited-empty">Todavía no hay salas ajenas en tu historial. Aparecerán aquí después de entrar con tu cuenta iniciada.</p>';
   } catch (error) { app.querySelector('#rooms-grid').textContent = error.message; }
 }
 
