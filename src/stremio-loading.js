@@ -27,3 +27,34 @@ export function sourcesLoadingMarkup(providerCount = 1) {
     <p class="sa-sources-loading-footnote">Las opciones aparecerán aquí cuando respondan los addons.</p>
   </div>`;
 }
+// These placeholders reuse the cinema palette, and never contain private addon URLs.
+export function searchLoadingMarkup() {
+  return `<div class="sa-search-loading" role="status" aria-live="polite" aria-label="Buscando películas y series">
+    <div class="sa-search-loading-head"><span class="sa-search-loading-indicator" aria-hidden="true"></span>
+      <span>Buscando en tus catálogos…</span></div>
+    <div class="sa-search-loading-grid" aria-hidden="true">
+      ${Array.from({length: 6}, (_, index) => `<div class="sa-search-placeholder" style="--skeleton-index:${index}">
+        <div class="sa-search-poster-shimmer"></div><span class="sa-skeleton-line sa-skeleton-title"></span>
+        <span class="sa-skeleton-line sa-skeleton-subtitle"></span>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+export function detailLoadingMarkup(title = '') {
+  // The caller supplies a pre-escaped title from escapeHtml().
+  return `<div class="sa-detail-loading" role="status" aria-live="polite" aria-label="Cargando información del título">
+    <div class="sa-detail-loading-poster" aria-hidden="true"></div>
+    <div class="sa-detail-loading-info">
+      <span class="sa-detail-loading-eyebrow">CINE Y SERIES</span>
+      <strong>${title}</strong>
+      <span class="sa-detail-loading-label"><span class="sa-search-loading-indicator" aria-hidden="true"></span>
+        Preparando ficha y fuentes…</span>
+      <div class="sa-detail-loading-lines" aria-hidden="true">
+        <span class="sa-skeleton-line sa-skeleton-title"></span>
+        <span class="sa-skeleton-line"></span>
+        <span class="sa-skeleton-line sa-skeleton-subtitle"></span>
+      </div>
+    </div>
+  </div>`;
+}

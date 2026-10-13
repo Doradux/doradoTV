@@ -2,7 +2,8 @@ import { Film, Puzzle, Search, Play, ArrowLeft, Trash2, Plus, X } from 'lucide';
 import { iconSvg, escapeHtml } from './ui.js';
 import { seasonGroups } from './vod-utils.js';
 import { browserManifestUrl, browserResourceUrl, browserAddonJson, browserSupports } from './stremio-browser.js';
-import { sourcesLoadingMarkup } from './stremio-loading.js';
+import { sourcesLoadingMarkup, searchLoadingMarkup, detailLoadingMarkup } from './stremio-loading.js';
+import { normalizeFilmQuery, rankFilmResults } from './cinema-search.js';
 import './stremio.css';
 const e = escapeHtml;
 const cover = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="sa-no-poster">${iconSvg(Film)}</span>`;
@@ -56,7 +57,9 @@ export function mountRoomAddons(app, session, { player }) {
   app.append(manage);
   const $ = (sel) => cinema.querySelector(sel) || manage.querySelector(sel);
   const state = { addons: [], owner: false, query: '', metas: [], current: null,
-    seasons: [], episodeId: '', streams: [], searchToken: 0, detailToken: 0, streamToken: 0, loaded: false };
+    seasons: [], episodeId: '', streams: [], searchToken: 0, detailToken: 0, streamToken: 0, loaded: false,
+    searchCache: new Map() };
+  let searchTimer = null;
   const visible = () => !cinema.hidden;
   const say = (message, detail = false) => { $(detail ? '#sa-stream-status' : '#sa-message').textContent = message; };
   const cards = (metas) => metas.map((m, i) => `<button class="sa-card" type="button" data-film="${i}" style="--card-index:${Math.min(i, 24)}">
@@ -71,7 +74,9 @@ export function mountRoomAddons(app, session, { player }) {
   }
   async function refresh() {
     const response = await api(room, 'list');
-    state.addons = response.addons; state.owner = response.owner; state.loaded = true; renderAddons();
+    state.addons = response.addons; state.owner = response.owner; state.loaded = true;
+    state.searchCache.clear();
+    renderAddons();
   }
   const publicAddons = () => state.addons.filter((addon) => !!addon.browserUrl);
   async function fetchPublicResource(addon, resource, type, id, extra = {}) {
@@ -81,37 +86,57 @@ export function mountRoomAddons(app, session, { player }) {
   }
   async function browse() {
     const token = ++state.searchToken, query = state.query.trim();
+    const target = $('#sa-grid');
     if (query.length < 2) {
-      say(query ? 'Escribe al menos dos caracteres.' : '');
-      $('#sa-grid').innerHTML = '<p class="sa-muted">Busca una película o serie.</p>';
+      say(query ? 'Escribe al menos dos caracteres.' : 'Escribe el título de una película o serie.');
+      target.innerHTML = '<p class="sa-muted">Escribe al menos dos caracteres para buscar.</p>';
+      target.setAttribute('aria-busy', 'false');
       return;
     }
-    say('Buscando…');
-    $('#sa-grid').classList.add('is-loading');
-    try {
-      const browserSearches = publicAddons().flatMap((addon) =>
-        addon.manifest.catalogs.filter((catalog) => catalog.search && !catalog.required &&
+    const cacheKey = normalizeFilmQuery(query);
+    const cached = state.searchCache.get(cacheKey);
+    if (cached && Date.now() - cached.time < 90000) {
+      state.metas = cached.metas;
+      target.innerHTML = cards(state.metas) || '<p class="sa-muted">No hay resultados para esa búsqueda.</p>';
+      say(state.metas.length + (state.metas.length === 1 ? ' resultado' : ' resultados'));
+      target.setAttribute('aria-busy', 'false');
+      return;
+    }
+    target.innerHTML = searchLoadingMarkup();
+    target.setAttribute('aria-busy', 'true');
+    say('');
+    const current = () => token === state.searchToken && visible() && state.query.trim() === query;
+    const responses = [];
+    let resolved = 0, errors = 0;
+    const jobs = [
+      api(room, 'search', { type: 'all', search: query }),
+      ...publicAddons().flatMap((addon) =>
+        addon.manifest.catalogs.filter((catalog) =>
+          catalog.search && !catalog.required &&
           browserSupports(addon.manifest, 'catalog', catalog.type)).slice(0, 8)
-          .map((catalog) => fetchPublicResource(addon, 'catalog', catalog.type, catalog.id, { search: query })));
-      const results = await Promise.allSettled([
-        api(room, 'search', { type: 'all', search: query }), ...browserSearches,
-      ]);
-      if (token !== state.searchToken || !visible()) return;
-      const distinct = new Map();
-      for (const result of results) if (result.status === 'fulfilled')
-        for (const meta of result.value.metas || []) {
-          const key = meta.type + ':' + meta.id;
-          if (!distinct.has(key) || (!distinct.get(key).poster && meta.poster)) distinct.set(key, meta);
-        }
-      state.metas = [...distinct.values()].slice(0, 100);
-      $('#sa-grid').innerHTML = cards(state.metas) || '<p class="sa-muted">No hay resultados.</p>';
-      const errors = results.filter((result) => result.status === 'rejected');
-      say(state.metas.length ? '' : errors.length
-        ? 'Algunos addons no están disponibles. Comprueba CORS o prueba otra búsqueda.'
-        : 'No se encontraron títulos.');
-    } catch (error) {
-      if (token === state.searchToken) say(error.message);
-    } finally { if (token === state.searchToken) $('#sa-grid').classList.remove('is-loading'); }
+          .map((catalog) => fetchPublicResource(addon, 'catalog', catalog.type, catalog.id, { search: query }))),
+    ];
+    const finish = () => {
+      if (!current()) return;
+      const ranked = rankFilmResults(responses, query);
+      state.metas = ranked;
+      if (ranked.length) {
+        target.innerHTML = cards(ranked);
+        say(ranked.length + (ranked.length === 1 ? ' resultado' : ' resultados') +
+          (resolved < jobs.length ? ' · Buscando más…' : errors ? ' · Algunos addons no respondieron.' : ''));
+      } else if (resolved === jobs.length) {
+        target.innerHTML = '<p class="sa-muted">No hay resultados. Prueba con otro título o una palabra menos.</p>';
+        say(errors ? 'Algunos addons no respondieron.' : 'Sin resultados para esa búsqueda.');
+      }
+      if (resolved === jobs.length) {
+        target.setAttribute('aria-busy', 'false');
+        if (state.searchCache.size > 20) state.searchCache.delete(state.searchCache.keys().next().value);
+        state.searchCache.set(cacheKey, { time: Date.now(), metas: ranked });
+      }
+    };
+    await Promise.all(jobs.map((job) => job.then((result) => {
+      if (current()) responses.push(...(result.metas || []));
+    }).catch(() => { errors++; }).finally(() => { resolved++; finish(); })));
   }
   function swap(detail) {
     $('#sa-browse').hidden = detail; $('#sa-detail').hidden = !detail;
@@ -152,8 +177,10 @@ export function mountRoomAddons(app, session, { player }) {
     state.current = preview; state.seasons = []; state.episodeId = '';
     player.setNavigation({});
     swap(true);
-    $('#sa-detail-meta').innerHTML = `<div class="sa-feature">${cover(preview)}<div><h2>${e(preview.name)}</h2></div></div>`;
-    $('#sa-episodes').replaceChildren(); $('#sa-streams').replaceChildren(); say('Cargando…', true);
+    $('#sa-detail-meta').innerHTML = detailLoadingMarkup(e(preview.name));
+    $('#sa-episodes').replaceChildren();
+    $('#sa-streams').innerHTML = sourcesLoadingMarkup(1);
+    say('', true);
     let info = preview;
     const selectedAddon = publicAddons().find((addon) => addon.id === preview.addonId);
     try {
@@ -234,8 +261,19 @@ export function mountRoomAddons(app, session, { player }) {
     if (!state.loaded) refresh().catch((err) => say(err.message));
     if (!state.query) $('#sa-grid').innerHTML = '<p class="sa-muted">Busca una película o serie.</p>';
   }
-  function hide() { cinema.hidden = true; ++state.searchToken; ++state.detailToken; ++state.streamToken; }
-  $('#sa-search').onsubmit = (event) => { event.preventDefault(); state.query = $('#sa-search-input').value; browse(); };
+  function hide() { clearTimeout(searchTimer); cinema.hidden = true; ++state.searchToken; ++state.detailToken; ++state.streamToken; }
+  $('#sa-search').onsubmit = (event) => {
+    event.preventDefault(); clearTimeout(searchTimer);
+    state.query = $('#sa-search-input').value; browse();
+  };
+  $('#sa-search-input').addEventListener('input', (event) => {
+    clearTimeout(searchTimer);
+    state.query = event.target.value;
+    // Invalidate earlier requests immediately, not after the debounce fires.
+    ++state.searchToken;
+    if (state.query.trim().length < 2) return browse();
+    searchTimer = setTimeout(() => browse(), 370);
+  });
   cinema.addEventListener('click', async (event) => {
     if (event.target.closest('[data-act="back"]')) { ++state.detailToken; ++state.streamToken; swap(false); return; }
     const film = event.target.closest('[data-film]');

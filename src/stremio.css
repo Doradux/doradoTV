@@ -288,3 +288,53 @@
   .sa-sources-loading-progress>span, .sa-skeleton-line { animation: none !important; }
   .sa-sources-loading-progress>span { width: 100%; opacity: .55; }
 }
+
+/* Instant cinema search, no layout shift while remote catalogues respond. */
+.sa-search-loading { grid-column:1 / -1; min-width:0; width:100%; }
+.sa-search-loading-head { display:flex; align-items:center; gap:9px; color:#d9c6a6; font-size:12px; font-weight:650; margin:1px 0 16px; }
+.sa-search-loading-indicator {
+  display:inline-block; vertical-align:middle; flex:0 0 11px; height:11px; width:11px;
+  border:2px solid rgba(235,197,127,.22); border-top-color:#efcb86;
+  border-radius:50%; animation:sa-search-rotate .88s linear infinite;
+}
+.sa-search-loading-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 13px; width:100%; }
+.sa-search-placeholder { min-width:0; display:flex; flex-direction:column; gap:9px; }
+.sa-search-poster-shimmer {
+  width:100%; aspect-ratio:2/3; border:1px solid rgba(203,217,238,.08); border-radius:13px;
+  background:linear-gradient(115deg,#202b3a 10%,#334152 45%,#202b3a 85%);
+  background-size:240% 100%; animation:sa-skeleton-shimmer 2s ease-in-out infinite;
+  animation-delay:calc(var(--skeleton-index) * .09s);
+}
+.sa-search-placeholder .sa-skeleton-title { margin-top:1px; width:80%; }
+.sa-search-placeholder .sa-skeleton-subtitle { width:45%; }
+@keyframes sa-search-rotate { to { transform:rotate(360deg); } }
+/* Film/episode loading is visually consistent with the eventual poster + metadata. */
+.sa-detail-loading { display:flex; flex-direction:column; gap:15px; min-height:165px; padding:3px 0 16px; }
+.sa-detail-loading-poster {
+  height:180px; width:120px; max-width:55%; aspect-ratio:2/3;
+  border:1px solid rgba(229,199,136,.17); border-radius:11px;
+  background:linear-gradient(120deg,#192535,#364050,#192535); background-size:220% 100%;
+  animation:sa-skeleton-shimmer 2.1s ease-in-out infinite;
+}
+.sa-detail-loading-info { display:flex; flex-direction:column; align-items:flex-start; gap:9px; min-width:0; flex:1 1 0; }
+.sa-detail-loading-eyebrow { color:#dfbb72; font-size:10px; font-weight:800; letter-spacing:.16em; }
+.sa-detail-loading-info strong { color:#f3f2ec; font-size:18px; line-height:1.3; overflow-wrap:anywhere; }
+.sa-detail-loading-label { display:inline-flex; gap:8px; align-items:center; color:#adb9c9; font-size:11px; }
+.sa-detail-loading-lines { display:flex; flex-direction:column; gap:9px; width:100%; margin-top:4px; }
+.sa-detail-loading-lines .sa-skeleton-line { max-width:100%; }
+.sa-detail-loading-lines .sa-skeleton-line:nth-child(2) { width:100%; }
+.sa-detail-loading-lines .sa-skeleton-line:nth-child(3) { width:64%; }
+#sa-grid[aria-busy="true"] { min-height:180px; }
+#sa-streams[aria-busy="true"] { min-height:130px; }
+@media (max-width:750px) {
+  .sa-search-loading-grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:13px 10px; }
+  .sa-detail-loading { flex-direction:row; align-items:flex-start; }
+  .sa-detail-loading-poster { width:90px; height:135px; flex:0 0 90px; }
+}
+@media (max-width:420px) {
+  .sa-search-loading-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .sa-detail-loading-info strong { font-size:16px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .sa-search-loading-indicator,.sa-search-poster-shimmer,.sa-detail-loading-poster { animation:none!important; }
+}
