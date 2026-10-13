@@ -188,6 +188,7 @@ function mountPlayer(session, account) {
   let vodHlsErrorText = '';
   let vodHlsFailures = 0;
   let vodHlsRecoveryTimer = null;
+  let vodHlsStartupCancel = null;
   let directAudioSessionId = null;
   let torrentHeartbeat = null;
   let torrentWait = null;
@@ -280,6 +281,8 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    vodHlsStartupCancel?.();
+    vodHlsStartupCancel = null;
     clearTimeout(vodHlsRecoveryTimer);
     vodHlsRecoveryTimer = null;
     vodHlsErrorText = '';
@@ -508,13 +511,49 @@ function mountPlayer(session, account) {
           const instance = new Hls({ maxBufferLength: 24, maxMaxBufferLength: 45 });
           hls = instance;
           await new Promise((resolve, reject) => {
-            let manifestReady = false;
+            let startupComplete = false;
+            // A parsed manifest is only metadata. On slow torrents the first
+            // segment may take much longer, and calling video.play() before a
+            // usable buffer exists can surface as a misleading codec error.
+            const startupTimer = setTimeout(() => {
+              if (startupComplete || token !== playbackToken) return;
+              const reason = vodHlsErrorText ||
+                'No llegó el primer segmento reproducible desde Ubuntu. Comprueba los seeders o prueba otra fuente.';
+              vodHlsErrorText = reason;
+              startupComplete = true;
+              video.removeEventListener('error', onStartupVideoError);
+              vodHlsStartupCancel = null;
+              reject(Error(reason));
+            }, 100000);
+            const onStartupVideoError = () => {
+              if (startupComplete || token !== playbackToken || hls !== instance) return;
+              const reason = vodHlsErrorText || vodMediaErrorMessage(video.error, { kind: source.kind });
+              failStartup(reason);
+            };
+            const failStartup = (reason) => {
+              if (startupComplete) return;
+              startupComplete = true;
+              clearTimeout(startupTimer);
+              video.removeEventListener('error', onStartupVideoError);
+              vodHlsErrorText = reason;
+              vodHlsStartupCancel = null;
+              reject(Error(reason));
+            };
+            vodHlsStartupCancel = () => failStartup('Reproducción cancelada.');
+            video.addEventListener('error', onStartupVideoError);
             instance.on(Hls.Events.FRAG_BUFFERED, () => {
               if (token !== playbackToken || hls !== instance) return;
               const wasRecovering = vodHlsFailures > 0;
               vodHlsFailures = 0;
               vodHlsErrorText = '';
               if (wasRecovering) { setLoading(false); setStatus(''); $('#retry-video').hidden = true; }
+              if (!startupComplete) {
+                startupComplete = true;
+                clearTimeout(startupTimer);
+                video.removeEventListener('error', onStartupVideoError);
+                vodHlsStartupCancel = null;
+                resolve();
+              }
             });
             // Keep this handler installed after the manifest resolves: fragment
             // or decoder failures usually occur later, during video.play().
@@ -545,12 +584,13 @@ function mountPlayer(session, account) {
               setLoading(false);
               setStatus(reason, true);
               $('#retry-video').hidden = false;
-              if (!manifestReady) reject(Error(reason));
+              if (!startupComplete) failStartup(reason);
             });
             instance.once(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(ready.url));
             instance.once(Hls.Events.MANIFEST_PARSED, () => {
-              manifestReady = true;
-              resolve();
+              if (token === playbackToken && hls === instance) {
+                setStatus('Manifiesto HLS cargado. Esperando el primer segmento de vídeo…');
+              }
             });
             instance.attachMedia(video);
           });
