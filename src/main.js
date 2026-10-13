@@ -52,7 +52,7 @@ function mountPlayer(session, account) {
               <div class="empty-icon">${iconSvg(TvMinimal, 'h-9 w-9')}</div>
               <h2>Selecciona un canal</h2>
             </div>
-            <div id="loading" class="absolute inset-0 z-10 hidden items-center justify-center bg-black/60" role="status"><span class="loading-label"><span class="loading-dot"></span>Conectando con la emisión…</span></div>
+            <div id="loading" class="absolute inset-0 z-10 hidden items-center justify-center bg-black/60" role="status" aria-live="polite"><span class="loading-label"><span class="loading-dot"></span><span id="loading-main">Conectando con la emisión…</span></span></div>
           </div>
           <div class="player-controls" role="group" aria-label="Controles de reproducción">
             <div id="vod-tools" class="vod-tools" hidden>
@@ -221,6 +221,7 @@ function mountPlayer(session, account) {
     const target = $('#status');
     if (target.textContent !== message) reveal(target);
     target.textContent = message;
+    if (vodSession && message && !error) $('#loading-main').textContent = message;
     target.classList.toggle('text-red-300', error);
     target.classList.toggle('text-slate-400', !error);
   }
@@ -233,6 +234,8 @@ function mountPlayer(session, account) {
   });
 
   function setLoading(loading) {
+    $('#loading').classList.toggle('is-vod-loading', Boolean(loading && vodSession));
+    if (loading && !vodSession) $('#loading-main').textContent = 'Conectando con la emisión…';
     $('#loading').classList.toggle('hidden', !loading);
     $('#loading').classList.toggle('flex', loading);
   }

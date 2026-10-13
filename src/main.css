@@ -325,3 +325,34 @@ button:disabled { cursor: not-allowed; }
 .relay-health.is-offline{color:#e5be79}
 .relay-health button{border:1px solid #e7c27685;border-radius:8px;background:transparent;color:#eac377;padding:6px 9px;cursor:pointer}
 .relay-health[hidden],.relay-health button[hidden]{display:none!important}
+
+/* VOD-specific connecting state: progress comes from playback phase messages. */
+#loading.is-vod-loading {
+  background:radial-gradient(ellipse at center,rgba(206,159,77,.08),transparent 58%),rgba(4,7,12,.82);
+  backdrop-filter:blur(9px);
+}
+#loading.is-vod-loading .loading-label {
+  position:relative; flex-direction:column; justify-content:center; gap:17px;
+  width:min(380px,calc(100% - 36px)); max-width:100%;
+  min-height:132px; padding:23px 26px; border-radius:17px;
+  border:1px solid rgba(238,192,114,.30);
+  background:linear-gradient(150deg,#19212bec,#0f151fec);
+  box-shadow:0 22px 80px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.04);
+  text-align:center; color:#eee5d3; line-height:1.55; font-size:12px;
+}
+#loading.is-vod-loading .loading-label::after {
+  content:""; position:absolute; bottom:0; left:0; width:100%; height:2px;
+  border-radius:0 0 16px 16px;
+  background:linear-gradient(90deg,transparent,#f1ca7e,transparent);
+  animation:sa-search-track 2.2s ease-in-out infinite;
+}
+#loading.is-vod-loading .loading-dot {
+  width:31px;height:31px; flex:0 0 auto;
+  border:3px solid rgba(241,200,123,.17); border-top-color:#f2cd88;
+  border-radius:50%; background:none;
+  animation:sa-search-rotate 1.1s linear infinite;
+}
+@media (prefers-reduced-motion:reduce) {
+  #loading.is-vod-loading .loading-dot,
+  #loading.is-vod-loading .loading-label::after { animation:none!important; }
+}
