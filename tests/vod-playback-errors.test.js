@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { vodHlsErrorMessage, vodMediaErrorMessage } from '../src/vod-playback-errors.js';
+import { vodHlsErrorMessage, vodMediaErrorMessage, shouldFallbackToCompatibleAudio } from '../src/vod-playback-errors.js';
 
 test('VOD errors show the upstream HTTP failure rather than a misleading audio hint', () => {
   const failure = vodHlsErrorMessage({
@@ -23,4 +23,15 @@ test('VOD decoding errors suggest a different video source, not audio conversion
   assert.match(vodMediaErrorMessage(null, { kind: 'torrent' }), /torrent/);
   assert.doesNotMatch(vodMediaErrorMessage(null, { kind: 'torrent' }), /Audio compatible/);
   assert.match(vodMediaErrorMessage(null, { kind: 'https' }), /Audio compatible/);
+});
+
+test('direct HTTPS playback falls back once to the authenticated compatible relay', () => {
+  const direct = { kind: 'https', url: 'https://cdn.example.org/file.mkv',
+    audioTicket: { version: 1, data: 'signed' } };
+  assert.equal(shouldFallbackToCompatibleAudio(direct, false, 4), true);
+  assert.equal(shouldFallbackToCompatibleAudio(direct, false, 0, 'NotSupportedError'), true);
+  assert.equal(shouldFallbackToCompatibleAudio(direct, true, 4), false);
+  assert.equal(shouldFallbackToCompatibleAudio({ kind: 'https', url: direct.url }, false, 4), false);
+  assert.equal(shouldFallbackToCompatibleAudio({ kind: 'torrent', ticket: direct.audioTicket }, false, 4), false);
+  assert.match(vodMediaErrorMessage({ code: 4 }, { kind: 'torrent', hlsActive: true }), /HLS/);
 });

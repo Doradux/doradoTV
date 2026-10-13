@@ -18,7 +18,7 @@ import { setupRemotePlayback } from './remote-playback.js';
 import { mountRoomAddons } from './stremio-ui.js';
 import { formatPlaybackTime, seekTarget, vodSeekRange, timeFromSlider, sliderFromTime } from './vod-utils.js';
 import { setupFullscreenControls } from './fullscreen-controls.js';
-import { vodHlsErrorMessage, vodMediaErrorMessage } from './vod-playback-errors.js';
+import { vodHlsErrorMessage, vodMediaErrorMessage, shouldFallbackToCompatibleAudio } from './vod-playback-errors.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
 const app = document.querySelector('#app');
@@ -503,11 +503,16 @@ function mountPlayer(session, account) {
         setStatus('Streaming VOD listo. Preparando los primeros segundos…');
         vodSession.remux = false;
         for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
-        if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = ready.url;
-        else {
-          const { default: Hls } = await import('hls.js');
-          if (token !== playbackToken) return;
-          if (!Hls.isSupported()) throw Error('Tu navegador no admite reproducción HLS.');
+        // Chromium/Brave may report native HLS support despite failing to
+        // decode segmented TS. Prefer hls.js with MediaSource for diagnostics
+        // and consistent fragment handling; fall back to native HLS on Safari.
+        const { default: Hls } = await import('hls.js');
+        if (token !== playbackToken) return;
+        if (!Hls.isSupported()) {
+          if (!video.canPlayType('application/vnd.apple.mpegurl'))
+            throw Error('Este navegador no admite HLS con MediaSource ni de forma nativa.');
+          video.src = ready.url;
+        } else {
           const instance = new Hls({ maxBufferLength: 24, maxMaxBufferLength: 45 });
           hls = instance;
           await new Promise((resolve, reject) => {
@@ -527,7 +532,7 @@ function mountPlayer(session, account) {
             }, 100000);
             const onStartupVideoError = () => {
               if (startupComplete || token !== playbackToken || hls !== instance) return;
-              const reason = vodHlsErrorText || vodMediaErrorMessage(video.error, { kind: source.kind });
+              const reason = vodHlsErrorText || vodMediaErrorMessage(video.error, { kind: source.kind, hlsActive: true });
               failStartup(reason);
             };
             const failStartup = (reason) => {
@@ -623,6 +628,11 @@ function mountPlayer(session, account) {
       updateVodProgress();
     } catch (error) {
       if (token !== playbackToken) return;
+      if (shouldFallbackToCompatibleAudio(source, compatibleAudio, video.error?.code, error?.name)) {
+        // A direct MKV may be silent or unsupported in Chromium. Retry once
+        // using the per-viewer AAC/H.264 relay, retaining the selected source.
+        return playVod({ source, title, navigation, compatibleAudio: true });
+      }
       // Failed torrent attempts must not leave swarm connections or SW streams
       // alive while the user chooses a new source or clicks Retry.
       if (source.kind === 'torrent' && torrentSessionId) {
@@ -646,7 +656,7 @@ function mountPlayer(session, account) {
       setStatus(vodHlsErrorText || (unsupportedCodec
         ? 'El MKV se ha convertido, pero tu navegador no admite el códec de esta versión. Prueba una fuente H.264 o VP9.'
         : error?.name === 'NotSupportedError'
-          ? vodMediaErrorMessage({ code: 4 }, { kind: source.kind })
+          ? vodMediaErrorMessage({ code: 4 }, { kind: source.kind, hlsActive: Boolean(hls) })
           : error.message || 'No se pudo iniciar el vídeo.'), true);
       $('#retry-video').hidden = false;
     }
@@ -1001,14 +1011,23 @@ function mountPlayer(session, account) {
   };
   video.addEventListener('error', () => {
     if (vodSession && !pageUnloading) {
+      if (shouldFallbackToCompatibleAudio(vodSession.source, vodSession.compatibleAudio, video.error?.code)) {
+        const { source, title, navigation } = vodSession;
+        setStatus('Activando automáticamente el streaming con audio compatible…');
+        playVod({ source, title, navigation, compatibleAudio: true });
+        return;
+      }
       setConnecting(false); setLoading(false);
       const error = vodMediaErrorMessage(video.error, {
         kind: vodSession.source?.kind,
         compatibleAudio: vodSession.compatibleAudio,
         hlsError: vodHlsErrorText,
+        hlsActive: Boolean(hls),
       });
       console.warn('[vod] browser media error', {
-        code: video.error?.code, hlsDiagnosticsAvailable: Boolean(vodHlsErrorText),
+        code: video.error?.code, readyState: video.readyState,
+        networkState: video.networkState, bufferedRanges: video.buffered?.length ?? 0,
+        hlsActive: Boolean(hls), hlsDiagnosticsAvailable: Boolean(vodHlsErrorText),
       });
       setStatus(error, true);
       $('#retry-video').hidden = false;

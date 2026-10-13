@@ -22,9 +22,17 @@ export function vodHlsErrorMessage(data) {
   return 'La reproducción HLS se ha detenido. Prueba otra fuente y consulta los registros del relay.';
 }
 
-export function vodMediaErrorMessage(error, { kind, compatibleAudio, hlsError } = {}) {
+export function shouldFallbackToCompatibleAudio(source, compatibleAudio, errorCode, errorName) {
+  return source?.kind === 'https' && Boolean(source.audioTicket) && !compatibleAudio &&
+    (Number(errorCode) === 4 || errorName === 'NotSupportedError');
+}
+
+export function vodMediaErrorMessage(error, { kind, compatibleAudio, hlsError, hlsActive = false } = {}) {
   if (hlsError) return hlsError;
   const code = Number(error?.code);
+  if ((code === 3 || code === 4) && hlsActive)
+    return 'El navegador no pudo procesar el vídeo HLS (error de medios ' + code +
+      '). Puede ser un segmento incompleto o un fallo de conversión en Ubuntu, no necesariamente el códec original.';
   if (code === 3 || code === 4)
     return 'El navegador no admite el formato del vídeo recibido. Prueba otra versión compatible.';
   if (code === 2)
