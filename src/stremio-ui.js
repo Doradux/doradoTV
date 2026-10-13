@@ -4,6 +4,8 @@ import { seasonGroups } from './vod-utils.js';
 import { browserManifestUrl, browserResourceUrl, browserAddonJson, browserSupports } from './stremio-browser.js';
 import { sourcesLoadingMarkup, searchLoadingMarkup, detailLoadingMarkup } from './stremio-loading.js';
 import { normalizeFilmQuery, rankFilmResults } from './cinema-search.js';
+import { snapshotFilm, snapshotProvider, findRestoredProvider,
+  readCinemaSnapshot, writeCinemaSnapshot } from './cinema-session.js';
 import './stremio.css';
 const e = escapeHtml;
 const cover = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="sa-no-poster">${iconSvg(Film)}</span>`;
@@ -58,8 +60,37 @@ export function mountRoomAddons(app, session, { player }) {
   const $ = (sel) => cinema.querySelector(sel) || manage.querySelector(sel);
   const state = { addons: [], owner: false, query: '', metas: [], current: null,
     seasons: [], episodeId: '', streams: [], searchToken: 0, detailToken: 0, streamToken: 0, loaded: false,
-    searchCache: new Map() };
+    searchCache: new Map(), selectedProvider: null, playing: false,
+    view: 'browse', activeView: false };
   let searchTimer = null;
+  let restoring = false;
+  let cleared = false;
+  let lastSave = 0;
+  const sessionKey = 'dorado-tv:cinema:' + room;
+  const storage = (() => { try { return window.sessionStorage; } catch { return null; } })();
+  const persistedState = () => readCinemaSnapshot(storage, sessionKey);
+  function persist(force = false) {
+    if (restoring || cleared) return;
+    const now = Date.now();
+    if (!force && now - lastSave < 1200) return;
+    lastSave = now;
+    const playing = player.getPlaybackSnapshot?.();
+    const playingSource = snapshotProvider(playing?.source, -1);
+    const isCurrent = playing && state.playing && state.selectedProvider && playingSource &&
+      playingSource.kind === state.selectedProvider.kind &&
+      playingSource.fingerprint === state.selectedProvider.fingerprint;
+    writeCinemaSnapshot(storage, sessionKey, {
+      mode: state.activeView ? 'cinema' : 'channels',
+      view: state.view, query: state.query,
+      metas: state.metas.slice(0, 70), current: state.current,
+      episodeId: state.episodeId, provider: state.selectedProvider,
+      playing: state.playing && !(isCurrent && playing.ended),
+      position: isCurrent ? playing.position : state.resumePosition || 0,
+      paused: isCurrent ? playing.paused : state.resumePaused || false,
+      compatibleAudio: isCurrent ? playing.compatibleAudio : state.resumeAudio || false,
+      panelScroll: cinema.parentElement.scrollTop,
+    }, now);
+  }
   const visible = () => !cinema.hidden;
   const say = (message, detail = false) => { $(detail ? '#sa-stream-status' : '#sa-message').textContent = message; };
   const cards = (metas) => metas.map((m, i) => `<button class="sa-card" type="button" data-film="${i}" style="--card-index:${Math.min(i, 24)}">
@@ -129,6 +160,7 @@ export function mountRoomAddons(app, session, { player }) {
         say(errors ? 'Algunos addons no respondieron.' : 'Sin resultados para esa búsqueda.');
       }
       if (resolved === jobs.length) {
+        persist(true);
         target.setAttribute('aria-busy', 'false');
         if (state.searchCache.size > 20) state.searchCache.delete(state.searchCache.keys().next().value);
         state.searchCache.set(cacheKey, { time: Date.now(), metas: ranked });
@@ -139,9 +171,11 @@ export function mountRoomAddons(app, session, { player }) {
     }).catch(() => { errors++; }).finally(() => { resolved++; finish(); })));
   }
   function swap(detail) {
+    state.view = detail ? 'detail' : 'browse';
     $('#sa-browse').hidden = detail; $('#sa-detail').hidden = !detail;
     const target = detail ? $('#sa-detail') : $('#sa-browse');
     target.classList.remove('is-entering'); void target.offsetWidth; target.classList.add('is-entering');
+    persist(true);
   }
   const episodes = () => state.seasons.flatMap((group) => group.episodes);
   const navigation = () => {
@@ -163,19 +197,27 @@ export function mountRoomAddons(app, session, { player }) {
   async function chooseEpisode(id, { autoplay = false } = {}) {
     if (!episodes().some((ep) => ep.id === id)) return;
     state.episodeId = id;
+    state.selectedProvider = null; state.playing = false;
     drawEpisodes();
+    persist(true);
     await loadStreams(id);
     if (autoplay) {
       const index = state.streams.findIndex((source) => source.supported || (source.kind === 'torrent' && source.infoHash));
       if (index >= 0) await playSource(index);
     }
   }
-  async function detail(index) {
+  async function detail(index, { restoredEpisodeId = '', restoredProvider = null,
+    resumeAt = 0, startPaused = false, compatibleAudio = false } = {}) {
     const preview = state.metas[index];
     if (!preview) return;
     const token = ++state.detailToken; ++state.streamToken;
     state.current = preview; state.seasons = []; state.episodeId = '';
+    state.selectedProvider = restoredProvider ? snapshotProvider(restoredProvider, restoredProvider.index) : null;
+    state.playing = Boolean(restoredProvider);
+    state.resumePosition = resumeAt; state.resumePaused = startPaused;
+    state.resumeAudio = compatibleAudio;
     player.setNavigation({});
+    persist(true);
     swap(true);
     $('#sa-detail-meta').innerHTML = detailLoadingMarkup(e(preview.name));
     $('#sa-episodes').replaceChildren();
@@ -200,10 +242,18 @@ export function mountRoomAddons(app, session, { player }) {
     state.seasons = preview.type === 'series' ? seasonGroups(info.videos) : [];
     if (preview.type === 'series' && !state.seasons.length) { say('No hay episodios disponibles.', true); return; }
     if (state.seasons.length) {
-      state.episodeId = state.seasons[0].episodes[0].id;
+      state.episodeId = state.seasons.some((season) => season.episodes.some((ep) => ep.id === restoredEpisodeId))
+        ? restoredEpisodeId : state.seasons[0].episodes[0].id;
       drawEpisodes();
       await loadStreams(state.episodeId);
     } else await loadStreams(info.id || preview.id);
+    if (restoredProvider && token === state.detailToken && visible()) {
+      const candidate = findRestoredProvider(state.streams, restoredProvider);
+      if (candidate >= 0) {
+        await playSource(candidate, { resumeAt, startPaused, compatibleAudio, restoringPlayback: true });
+      } else say('La fuente anterior ya no está disponible. Selecciona otra para continuar.', true);
+    }
+    persist(true);
   }
   async function loadStreams(id) {
     const token = ++state.streamToken;
@@ -228,6 +278,11 @@ export function mountRoomAddons(app, session, { player }) {
           <small>${e(s.title || (s.kind === 'torrent' ? 'Torrent' : 'Vídeo'))}</small>
           ${s.seeders == null ? '' : `<small>${s.seeders.toLocaleString('es')} seeders</small>`}</span></button>`).join('') ||
           '<p class="sa-muted">No hay fuentes disponibles.</p>';
+      if (state.selectedProvider) {
+        const selected = findRestoredProvider(state.streams, state.selectedProvider);
+        if (selected >= 0) $('#sa-streams').querySelector('[data-source="' + selected + '"]')
+          ?.setAttribute('aria-pressed', 'true');
+      }
       const hasErrors = results.some((result) => result.status === 'rejected' || result.value?.warnings?.length);
       say(state.streams.length
         ? `${state.streams.length} ${state.streams.length === 1 ? 'fuente encontrada' : 'fuentes encontradas'}${hasErrors ? ' · Algunos addons no respondieron.' : ''}`
@@ -241,7 +296,8 @@ export function mountRoomAddons(app, session, { player }) {
       if (token === state.streamToken) $('#sa-streams').setAttribute('aria-busy', 'false');
     }
   }
-  async function playSource(index) {
+  async function playSource(index, { resumeAt = 0, startPaused = false,
+    compatibleAudio = false, restoringPlayback = false } = {}) {
     const source = state.streams[index];
     if (!source || !state.current) return;
     if (source.kind !== 'torrent' && !source.supported) { say('Formato no reproducible en el navegador.', true); return; }
@@ -249,33 +305,95 @@ export function mountRoomAddons(app, session, { player }) {
     if (source.kind === 'torrent' && !source.ticket) { say('No se pudo autorizar este torrent. Actualiza la búsqueda.', true); return; }
     $('#sa-streams').querySelectorAll('[data-source]').forEach((b) =>
       b.setAttribute('aria-pressed', String(Number(b.dataset.source) === index)));
+    state.selectedProvider = snapshotProvider(source, index);
+    state.playing = true;
+    state.resumePosition = resumeAt;
+    state.resumePaused = startPaused;
+    state.resumeAudio = compatibleAudio;
+    persist(true);
     const title = state.current.type === 'series'
       ? `${state.current.name} · ${episodes().find((ep) => ep.id === state.episodeId)?.title || 'Episodio'}`
       : state.current.name;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    try { await player.play({ source, title, navigation: state.current.type === 'series' ? navigation() : {} }); say('', true); }
+    if (!restoringPlayback) window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      await player.play({ source, title, navigation: state.current.type === 'series' ? navigation() : {},
+        resumeAt, startPaused, compatibleAudio });
+      say('', true);
+      persist(true);
+    }
     catch (err) { say(err.message, true); }
   }
-  function show() {
-    cinema.hidden = false;
-    if (!state.loaded) refresh().catch((err) => say(err.message));
+  let refreshPending = null;
+  const ensureLoaded = () => {
+    if (state.loaded) return Promise.resolve();
+    if (!refreshPending) refreshPending = refresh().finally(() => { refreshPending = null; });
+    return refreshPending;
+  };
+  function show({ restoringView = false } = {}) {
+    cinema.hidden = false; state.activeView = true;
+    if (!restoringView) persist(true);
+    if (!state.loaded) ensureLoaded().catch((err) => say(err.message));
     if (!state.query) $('#sa-grid').innerHTML = '<p class="sa-muted">Busca una película o serie.</p>';
   }
-  function hide() { clearTimeout(searchTimer); cinema.hidden = true; ++state.searchToken; ++state.detailToken; ++state.streamToken; }
+  function hide() {
+    persist(true);
+    clearTimeout(searchTimer);
+    cinema.hidden = true; state.activeView = false;
+    ++state.searchToken; ++state.detailToken; ++state.streamToken;
+    persist(true);
+  }
+  async function restore(saved) {
+    if (!saved || saved.mode !== 'cinema') return;
+    restoring = true;
+    try {
+      await ensureLoaded();
+      if (!visible()) return;
+      state.query = saved.query;
+      $('#sa-search-input').value = saved.query;
+      state.metas = saved.metas;
+      state.current = null; state.episodeId = '';
+      state.selectedProvider = null; state.playing = false;
+      $('#sa-grid').innerHTML = cards(state.metas) || '<p class="sa-muted">Buscando títulos…</p>';
+      if ((saved.view === 'detail' || saved.playing) && saved.current) {
+        const film = snapshotFilm(saved.current);
+        if (!film) return;
+        let index = state.metas.findIndex(m => m.type === film.type && m.id === film.id);
+        if (index < 0) {
+          state.metas.unshift(film);
+          index = 0;
+        }
+        // Fetch fresh metadata and streams: saved URLs/tickets expire and
+        // private addon configuration is never stored in sessionStorage.
+        await detail(index, {
+          restoredEpisodeId: saved.episodeId,
+          restoredProvider: saved.playing ? saved.provider : null,
+          resumeAt: saved.position, startPaused: saved.paused,
+          compatibleAudio: saved.compatibleAudio,
+        });
+        if (saved.view === 'browse') swap(false);
+        cinema.parentElement.scrollTop = saved.panelScroll || 0;
+      } else swap(false);
+    } finally {
+      restoring = false;
+      persist(true);
+      if (saved.query.trim().length >= 2) browse().catch((err) => say(err.message));
+    }
+  }
   $('#sa-search').onsubmit = (event) => {
     event.preventDefault(); clearTimeout(searchTimer);
-    state.query = $('#sa-search-input').value; browse();
+    state.query = $('#sa-search-input').value; persist(true); browse();
   };
   $('#sa-search-input').addEventListener('input', (event) => {
     clearTimeout(searchTimer);
     state.query = event.target.value;
+    persist(true);
     // Invalidate earlier requests immediately, not after the debounce fires.
     ++state.searchToken;
     if (state.query.trim().length < 2) return browse();
     searchTimer = setTimeout(() => browse(), 370);
   });
   cinema.addEventListener('click', async (event) => {
-    if (event.target.closest('[data-act="back"]')) { ++state.detailToken; ++state.streamToken; swap(false); return; }
+    if (event.target.closest('[data-act="back"]')) { ++state.detailToken; ++state.streamToken; swap(false); persist(true); return; }
     const film = event.target.closest('[data-film]');
     if (film) return detail(Number(film.dataset.film));
     const episode = event.target.closest('[data-episode]');
@@ -335,5 +453,8 @@ export function mountRoomAddons(app, session, { player }) {
     } catch (err) { $('#sa-manage-status').textContent = err.message; }
     finally { button.disabled = false; }
   };
-  return { show, hide };
+  return { show, hide, restore, savedState: persistedState, persist,
+    clearPlayback() { state.playing = false; persist(true); },
+    clearSavedState() { cleared = true; try { storage?.removeItem(sessionKey); } catch { /* unavailable */ } },
+  };
 }

@@ -107,13 +107,23 @@ function mountPlayer(session, account) {
     <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Sube un archivo .m3u de hasta 10 MB. Se guardará cifrado para esta sala; la lista actual se conserva si la subida falla.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
   </div>`;
 
-  const cinema = mountRoomAddons(app, session, { player: { play: playVod, setNavigation: setVodNavigation } });
-  const showSection = (mode) => {
+  const cinema = mountRoomAddons(app, session, { player: {
+    play: playVod, setNavigation: setVodNavigation,
+    getPlaybackSnapshot: () => vodSession ? {
+      source: vodSession.source,
+      position: Number(video.currentTime) || 0,
+      paused: video.paused,
+      compatibleAudio: vodSession.compatibleAudio,
+      ended: video.ended,
+    } : null,
+  } });
+  let savedCinema = null;
+  const showSection = (mode, { restoringView = false } = {}) => {
     const isCinema = mode === 'cinema';
     app.querySelector('#watch-layout').classList.toggle('media-mode-cinema', isCinema);
     app.querySelector('#media-channels').setAttribute('aria-pressed', String(!isCinema));
     app.querySelector('#media-cinema').setAttribute('aria-pressed', String(isCinema));
-    if (isCinema) cinema.show();
+    if (isCinema) cinema.show({ restoringView });
     else cinema.hide();
   };
   app.querySelector('#media-channels').addEventListener('click', () => showSection('channels'));
@@ -189,6 +199,7 @@ function mountPlayer(session, account) {
   let vodHlsFailures = 0;
   let vodHlsRecoveryTimer = null;
   let vodHlsStartupCancel = null;
+  let vodResumeCleanup = null;
   let directAudioSessionId = null;
   let torrentHeartbeat = null;
   let torrentWait = null;
@@ -207,6 +218,7 @@ function mountPlayer(session, account) {
   const tabKey = `dorado-tv:tab:${session.slug}`;
   const playbackKey = `dorado-tv:playback:${session.slug}`;
   const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
+  savedCinema = isReload ? cinema.savedState() : null;
   let tabId = isReload ? sessionStorage.getItem(tabKey) : null;
   if (!tabId) {
     tabId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -284,6 +296,8 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    vodResumeCleanup?.();
+    vodResumeCleanup = null;
     vodHlsStartupCancel?.();
     vodHlsStartupCancel = null;
     clearTimeout(vodHlsRecoveryTimer);
@@ -458,11 +472,36 @@ function mountPlayer(session, account) {
       updateVodProgress();
     }
   }
-  async function playVod({ source, title, navigation = {}, compatibleAudio = false }) {
+  async function playVod({ source, title, navigation = {}, compatibleAudio = false,
+    resumeAt = 0, startPaused = false }) {
     stop();
     const token = playbackToken;
     active = null;
-    vodSession = { source, title, navigation, compatibleAudio, remux: false };
+    vodSession = { source, title, navigation, compatibleAudio, remux: false, resumeAt, startPaused };
+    const position = Number(resumeAt);
+    if (Number.isFinite(position) && position > 0) {
+      let applied = false;
+      const applyResume = () => {
+        if (applied || token !== playbackToken || video.readyState < 1) return;
+        const duration = Number(video.duration);
+        const target = Number.isFinite(duration) && duration > 0
+          ? Math.min(Math.max(0, position), Math.max(0, duration - 0.5))
+          : Math.max(0, position);
+        try {
+          video.currentTime = target;
+          applied = true;
+          vodResumeCleanup?.();
+          vodResumeCleanup = null;
+          updateVodProgress();
+        } catch { /* metadata not seekable yet; retry when duration resolves */ }
+      };
+      video.addEventListener('loadedmetadata', applyResume);
+      video.addEventListener('durationchange', applyResume);
+      vodResumeCleanup = () => {
+        video.removeEventListener('loadedmetadata', applyResume);
+        video.removeEventListener('durationchange', applyResume);
+      };
+    }
     vodHlsErrorText = '';
     vodHlsFailures = 0;
     const canConvertAudio = source?.kind === 'https' &&
@@ -619,6 +658,17 @@ function mountPlayer(session, account) {
         } else video.src = source.url;
       } else throw Error('Fuente inválida.');
       if (token !== playbackToken) return;
+      if (video.readyState >= 1 && vodResumeCleanup) {
+        // Retrigger metadata seeking when HLS has finally buffered the first fragment.
+        video.dispatchEvent(new Event('durationchange'));
+      }
+      if (startPaused) {
+        video.pause();
+        setConnecting(false); setLoading(false);
+        setStatus('Película restaurada. Pulsa Play para continuar.');
+        updateVodProgress();
+        return;
+      }
       try { await video.play(); }
       catch (error) {
         if (error.name === 'NotAllowedError') {
@@ -666,6 +716,7 @@ function mountPlayer(session, account) {
   }
 
   async function play(channel, { resume = false } = {}) {
+    cinema.clearPlayback();
     if (!channel) return;
     stop();
     const token = playbackToken;
@@ -769,11 +820,11 @@ function mountPlayer(session, account) {
     }
   }
 
-  $('#leave-room').addEventListener('click', async () => { clearRememberedPlayback(); stop(); await releasePending; navigateRoom(); });
-  $('#logout').addEventListener('click', async () => { clearRememberedPlayback(); stop(); await releasePending; await roomApi('logout', { data: {} }); navigateRoom(); });
+  $('#leave-room').addEventListener('click', async () => { cinema.clearSavedState(); clearRememberedPlayback(); stop(); await releasePending; navigateRoom(); });
+  $('#logout').addEventListener('click', async () => { cinema.clearSavedState(); clearRememberedPlayback(); stop(); await releasePending; await roomApi('logout', { data: {} }); navigateRoom(); });
   async function loadPlaylist() {
     setStatus('Cargando canales…');
-    try { const { source } = await inRoom('playlist'); setPlaylist(parsePlaylist(source), { resume: isReload }); }
+    try { const { source } = await inRoom('playlist'); setPlaylist(parsePlaylist(source), { resume: isReload && savedCinema?.mode !== 'cinema' }); }
     catch (error) { setStatus(error.message, true); }
   }
   $('#channel-list').addEventListener('click', (event) => {
@@ -981,17 +1032,20 @@ function mountPlayer(session, account) {
     $('#fullscreen').title = enabled ? 'Salir de pantalla completa' : 'Pantalla completa';
     $('#fullscreen').setAttribute('aria-label', $('#fullscreen').title);
   });
-  video.addEventListener('play', () => setPlayIcon(true));
-  video.addEventListener('pause', () => setPlayIcon(false));
+  video.addEventListener('play', () => { setPlayIcon(true); if (!pageUnloading) cinema.persist(true); });
+  video.addEventListener('pause', () => { setPlayIcon(false); if (!pageUnloading) cinema.persist(true); });
   video.addEventListener('waiting', () => setLoading(true));
   video.addEventListener('playing', () => { setConnecting(false); setLoading(false); });
   ['timeupdate', 'durationchange', 'loadedmetadata', 'progress', 'seeking', 'seeked'].forEach((type) =>
     video.addEventListener(type, updateVodProgress));
+  ['timeupdate', 'seeking', 'seeked'].forEach((type) =>
+    video.addEventListener(type, () => { if (!pageUnloading) cinema.persist(type !== 'timeupdate'); }));
   $('#vod-prev').onclick = () => vodNavigation.previous?.();
   $('#vod-next').onclick = () => vodNavigation.next?.();
   $('#vod-audio').onclick = () => {
     if (!vodSession || connecting) return;
-    playVod({ ...vodSession, compatibleAudio: !vodSession.compatibleAudio });
+    playVod({ ...vodSession, resumeAt: Number(video.currentTime) || 0,
+      startPaused: video.paused, compatibleAudio: !vodSession.compatibleAudio });
   };
   $('#vod-back').onclick = () => seekVod(-10);
   $('#vod-forward').onclick = () => seekVod(10);
@@ -1042,6 +1096,8 @@ function mountPlayer(session, account) {
     stop();
     playbackError('El navegador no pudo abrir la emisión.');
   });
+  // Store the current timeline BEFORE stop() releases the relay session.
+  window.addEventListener('pagehide', () => cinema.persist(true), { once: true });
   window.addEventListener('pagehide', () => { pageUnloading = true; fullscreenControls.dispose(); stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
   async function heartbeat() {
     if (heartbeatPending) return;
@@ -1145,8 +1201,15 @@ function mountPlayer(session, account) {
 
   probeRelay();
   window.addEventListener('pagehide', () => clearTimeout(relayHealthTimer), { once: true });
-  if (session.hasPlaylist) loadPlaylist();
-  else setStatus(session.owner ? 'Sube un archivo .m3u para añadir canales.' : 'El propietario todavía no ha subido la lista de esta sala.');
+  const playlistLoaded = session.hasPlaylist ? loadPlaylist() : Promise.resolve();
+  if (!session.hasPlaylist) setStatus(session.owner ? 'Sube un archivo .m3u para añadir canales.' : 'El propietario todavía no ha subido la lista de esta sala.');
+  if (savedCinema?.mode === 'cinema') {
+    showSection('cinema', { restoringView: true });
+    // Loading the M3U channel list invokes stop(). Finish that first so it
+    // cannot unexpectedly interrupt a restored film.
+    playlistLoaded.then(() => cinema.restore(savedCinema)).catch((error) =>
+      setStatus('No se pudo restaurar Cine y series: ' + (error.message || 'Error desconocido.'), true));
+  }
 }
 
 app.innerHTML = '<main class="app-boot"><span class="loading-dot"></span><p>Cargando…</p></main>';
