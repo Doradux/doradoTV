@@ -18,6 +18,7 @@ import { setupRemotePlayback } from './remote-playback.js';
 import { mountRoomAddons } from './stremio-ui.js';
 import { formatPlaybackTime, seekTarget, vodSeekRange, timeFromSlider, sliderFromTime } from './vod-utils.js';
 import { setupFullscreenControls } from './fullscreen-controls.js';
+import { createVodTimelinePreview } from './vod-timeline-preview.js';
 import { vodHlsErrorMessage, vodMediaErrorMessage, shouldFallbackToCompatibleAudio } from './vod-playback-errors.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
@@ -56,7 +57,16 @@ function mountPlayer(session, account) {
           </div>
           <div class="player-controls" role="group" aria-label="Controles de reproducción">
             <div id="vod-tools" class="vod-tools" hidden>
-              <input id="vod-seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición de reproducción">
+              <div class="vod-seek-track">
+                <input id="vod-seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición de reproducción">
+                <div id="vod-seek-preview" class="vod-seek-preview" hidden aria-hidden="true">
+                  <div class="vod-seek-preview-frame">
+                    <img alt="" decoding="async" hidden referrerpolicy="no-referrer">
+                    <span data-preview-state>Preparando miniatura…</span>
+                  </div>
+                  <span class="vod-seek-preview-time" data-preview-time>00:00</span>
+                </div>
+              </div>
               <output id="vod-clock" for="vod-seek">00:00 / --:--</output>
             </div>
             <div class="player-actions">
@@ -195,6 +205,9 @@ function mountPlayer(session, account) {
   let vodNavigation = {};
   let torrentSessionId = null;
   let vodHlsSessionId = null;
+  let vodPreviewSessionId = null;
+  let vodPreviewPlaylist = '';
+  let vodPreviewPending = null;
   let vodHlsErrorText = '';
   let vodHlsFailures = 0;
   let vodHlsRecoveryTimer = null;
@@ -294,8 +307,52 @@ function mountPlayer(session, account) {
       return null;
     }
   }
+  const timelinePreview = createVodTimelinePreview($('#vod-seek'), $('#vod-seek-preview'), {
+    getRange: () => vodSession ? vodSeekRange(video, vodSession.remux) : null,
+    getPlaylist: () => vodPreviewPlaylist,
+    preparePlaylist: async () => {
+      if (vodPreviewPlaylist) return vodPreviewPlaylist;
+      // Direct MP4/MKV links can use a separate, short-lived VOD ticket just
+      // for the preview image. This never changes the playing video source.
+      if (!vodSession || vodSession.source?.kind !== 'https' ||
+          !vodSession.source.audioTicket) return null;
+      if (vodPreviewPending) return vodPreviewPending;
+      const token = playbackToken;
+      const ticket = vodSession.source.audioTicket;
+      vodPreviewPending = (async () => {
+        const started = await inRoom('vod-start', { data: { kind: 'https', ticket } });
+        if (token !== playbackToken) {
+          inRoom('vod-stop', { data: { id: started.id }, keepalive: true }).catch(() => {});
+          return null;
+        }
+        vodPreviewSessionId = started.id;
+        for (let i = 0; i < 26 && token === playbackToken; i++) {
+          const ready = await inRoom('vod-status', { data: { id: started.id } });
+          if (ready.state === 'ready') return (vodPreviewPlaylist = ready.url);
+          if (ready.state === 'failed') break;
+          await new Promise((resolve) => setTimeout(resolve, 1600));
+        }
+        // Free the extra preview session on failed initialization or timeout.
+        if (token === playbackToken && vodPreviewSessionId === started.id) {
+          vodPreviewSessionId = null;
+          inRoom('vod-stop', { data: { id: started.id }, keepalive: true }).catch(() => {});
+        }
+        return null;
+      })().finally(() => { if (token === playbackToken) vodPreviewPending = null; });
+      return vodPreviewPending;
+    },
+    formatTime: formatPlaybackTime,
+  });
   function stop() {
     playbackToken += 1;
+    timelinePreview.reset();
+    vodPreviewPlaylist = '';
+    vodPreviewPending = null;
+    if (vodPreviewSessionId) {
+      const id = vodPreviewSessionId;
+      vodPreviewSessionId = null;
+      inRoom('vod-stop', { data: { id }, keepalive: true }).catch(() => {});
+    }
     vodResumeCleanup?.();
     vodResumeCleanup = null;
     vodHlsStartupCancel?.();
@@ -542,6 +599,7 @@ function mountPlayer(session, account) {
         }
         if (token !== playbackToken) return;
         if (ready?.state !== 'ready') throw Error('La fuente tardó demasiado. Prueba otra con más seeders.');
+        vodPreviewPlaylist = ready.url;
         setStatus('Streaming VOD listo. Preparando los primeros segundos…');
         vodSession.remux = false;
         for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
@@ -1098,7 +1156,7 @@ function mountPlayer(session, account) {
   });
   // Store the current timeline BEFORE stop() releases the relay session.
   window.addEventListener('pagehide', () => cinema.persist(true), { once: true });
-  window.addEventListener('pagehide', () => { pageUnloading = true; fullscreenControls.dispose(); stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
+  window.addEventListener('pagehide', () => { pageUnloading = true; timelinePreview.destroy(); fullscreenControls.dispose(); stop(); ambient.destroy(); categorySelect.destroy(); }, { once: true });
   async function heartbeat() {
     if (heartbeatPending) return;
     heartbeatPending = true;

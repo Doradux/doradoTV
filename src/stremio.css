@@ -338,3 +338,48 @@
 @media (prefers-reduced-motion:reduce) {
   .sa-search-loading-indicator,.sa-search-poster-shimmer,.sa-detail-loading-poster { animation:none!important; }
 }
+
+/* Seek preview: lightweight JPEG frame above the timeline, no video seeking. */
+.vod-seek-track { position:relative; flex:1 1 0; min-width:0; height:18px; display:flex; align-items:center; }
+.vod-seek-track #vod-seek { width:100%; flex:1 1 100%; }
+.vod-seek-preview {
+  position:absolute; z-index:35; bottom:calc(100% + 13px);
+  width:192px; max-width:min(192px, 68vw);
+  pointer-events:none; user-select:none;
+  transform:translateX(-50%); display:grid; justify-items:center; gap:6px;
+  padding:7px 7px 8px; color:#f6ebd8;
+  background:linear-gradient(145deg,rgba(25,30,39,.98),rgba(10,13,19,.99));
+  border:1px solid rgba(238,200,131,.42); border-radius:13px;
+  box-shadow:0 16px 42px #000b,0 0 0 1px #0007;
+  animation:vod-preview-enter .13s ease-out both;
+}
+.vod-seek-preview[hidden] { display:none!important; }
+.vod-seek-preview-frame {
+  width:100%; aspect-ratio:16 / 9; display:grid; place-items:center;
+  border-radius:8px; overflow:hidden; background:linear-gradient(120deg,#263140,#0c1119);
+  border:1px solid rgba(255,255,255,.08); position:relative;
+}
+.vod-seek-preview-frame img {
+  display:block; width:100%; height:100%; object-fit:contain;
+}
+.vod-seek-preview-frame img[hidden] {display:none!important;}
+.vod-seek-preview-frame [data-preview-state] {
+  font-size:10px; font-weight:500; padding:8px; text-align:center; color:#bcc7d4;
+}
+.vod-seek-preview-frame [data-preview-state][hidden] { display:none!important; }
+.vod-seek-preview-time {
+  display:block; font-size:11px; font-weight:750; line-height:1.1;
+  font-variant-numeric:tabular-nums; letter-spacing:.02em;
+}
+@keyframes vod-preview-enter {
+  from {opacity:0;transform:translate(-50%,5px) scale(.97)}
+  to {opacity:1;transform:translate(-50%,0) scale(1)}
+}
+.player-controls.is-vod { z-index:8; }
+@media (max-width:639px) {
+  .vod-seek-preview { width:156px; padding:5px 5px 7px; bottom:calc(100% + 9px); }
+  .vod-seek-preview-time { font-size:10px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .vod-seek-preview {animation:none;}
+}
