@@ -242,8 +242,13 @@ export class VodHls {
     while (!this.closed && this.active < this.maxConcurrent && this.queue.length) {
       const job = this.queue.shift();
       this.active++;
-      this.transcode(job.source, job.index, job.path).then(job.resolve, job.reject)
-        .finally(() => { this.active--; this.drain(); });
+      this.transcode(job.source, job.index, job.path).then(job.resolve, (error) => {
+        // Do not log raw FFmpeg input URLs: they contain internal access tokens.
+        const diagnostic = String(error?.message || 'unknown')
+          .replace(/https?:\/\/\S+/g, '[redacted-url]').slice(0, 220);
+        console.warn('[vod] segment failed', job.source.key.slice(0, 8), 'segment', job.index, diagnostic);
+        job.reject(error);
+      }).finally(() => { this.active--; this.drain(); });
     }
   }
   async transcode(source, index, path) {
