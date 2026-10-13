@@ -14,6 +14,6 @@ test('torrent VOD waits for the first buffered HLS fragment, not just the manife
   const parsed = vod.match(/instance\.once\(Hls\.Events\.MANIFEST_PARSED[\s\S]*?instance\.attachMedia/);
   assert(parsed, 'VOD subscribes to the HLS manifest event');
   assert.doesNotMatch(parsed[0], /resolve\(\)/, 'The manifest alone cannot mark VOD as playable');
-  assert.match(vod, /No llegó el primer segmento reproducible/, 'A stalled source explains the missing data');
+  assert.match(vod, /La película está tardando demasiado en cargar/, 'A stalled source is described in user-friendly terms');
   assert.match(vod, /vodHlsStartupCancel = \(\) => failStartup/, 'Closing the player aborts startup');
 });

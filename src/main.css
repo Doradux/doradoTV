@@ -326,7 +326,8 @@ button:disabled { cursor: not-allowed; }
 .relay-health button{border:1px solid #e7c27685;border-radius:8px;background:transparent;color:#eac377;padding:6px 9px;cursor:pointer}
 .relay-health[hidden],.relay-health button[hidden]{display:none!important}
 
-/* VOD-specific connecting state: progress comes from playback phase messages. */
+/* VOD-specific loader: the light enters from outside the left edge and
+   fully exits the right edge, so both endpoints are invisible at loop reset. */
 #loading.is-vod-loading {
   background:radial-gradient(ellipse at center,rgba(206,159,77,.08),transparent 58%),rgba(4,7,12,.82);
   backdrop-filter:blur(9px);
@@ -339,12 +340,17 @@ button:disabled { cursor: not-allowed; }
   background:linear-gradient(150deg,#19212bec,#0f151fec);
   box-shadow:0 22px 80px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.04);
   text-align:center; color:#eee5d3; line-height:1.55; font-size:12px;
+  overflow:hidden;
 }
 #loading.is-vod-loading .loading-label::after {
-  content:""; position:absolute; bottom:0; left:0; width:100%; height:2px;
-  border-radius:0 0 16px 16px;
-  background:linear-gradient(90deg,transparent,#f1ca7e,transparent);
-  animation:sa-search-track 2.2s ease-in-out infinite;
+  content:""; position:absolute; bottom:0; left:0; width:25%; height:2px;
+  pointer-events:none;
+  background:linear-gradient(90deg,transparent,#f1ca7e 45%,#ffe4ac 55%,transparent);
+  animation:vod-loading-sweep 2.2s linear infinite;
+}
+@keyframes vod-loading-sweep {
+  from { transform:translateX(-100%); }
+  to { transform:translateX(400%); }
 }
 #loading.is-vod-loading .loading-dot {
   width:31px;height:31px; flex:0 0 auto;
@@ -354,5 +360,5 @@ button:disabled { cursor: not-allowed; }
 }
 @media (prefers-reduced-motion:reduce) {
   #loading.is-vod-loading .loading-dot,
-  #loading.is-vod-loading .loading-label::after { animation:none!important; }
+  #loading.is-vod-loading .loading-label::after { animation:none!important; opacity:.2; }
 }

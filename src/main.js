@@ -246,9 +246,14 @@ function mountPlayer(session, account) {
     const target = $('#status');
     if (target.textContent !== message) reveal(target);
     target.textContent = message;
-    if (vodSession && message && !error) $('#loading-main').textContent = message;
     target.classList.toggle('text-red-300', error);
     target.classList.toggle('text-slate-400', !error);
+  }
+  // Hide transient implementation details from viewers. Keep error statuses
+  // and diagnostics intact, but only show the useful loading phase in-player.
+  function setVodProgress(message = 'Cargando película…') {
+    setStatus('');
+    $('#loading-main').textContent = message;
   }
   const remotePlayback = setupRemotePlayback({
     video,
@@ -260,7 +265,7 @@ function mountPlayer(session, account) {
 
   function setLoading(loading) {
     $('#loading').classList.toggle('is-vod-loading', Boolean(loading && vodSession));
-    if (loading && !vodSession) $('#loading-main').textContent = 'Conectando con la emisión…';
+    if (loading) $('#loading-main').textContent = vodSession ? 'Cargando película…' : 'Conectando con la emisión…';
     $('#loading').classList.toggle('hidden', !loading);
     $('#loading').classList.toggle('flex', loading);
   }
@@ -576,12 +581,11 @@ function mountPlayer(session, account) {
     $('#retry-video').hidden = true;
     setConnecting(true);
     setLoading(true);
-    setStatus('Preparando reproducción…');
+    setVodProgress('Preparando película…');
     try {
       if (source.kind === 'torrent' || compatibleAudio) {
         const ticket = source.kind === 'torrent' ? source.ticket : source.audioTicket;
         if (!ticket) throw Error('Esta fuente no tiene autorización. Vuelve a buscar la película.');
-        setStatus('Preparando streaming bajo demanda. No es necesario descargar toda la película…');
         const started = await inRoom('vod-start', { data: { kind: source.kind, ticket } });
         if (token !== playbackToken) {
           inRoom('vod-stop', { data: { id: started.id }, keepalive: true }).catch(() => {});
@@ -594,13 +598,12 @@ function mountPlayer(session, account) {
           ready = await inRoom('vod-status', { data: { id: started.id } });
           if (ready.state === 'ready') break;
           if (ready.state === 'failed') throw Error(ready.error || 'No se pudo abrir la fuente.');
-          setStatus('Analizando el vídeo y conectando con la fuente…');
           await new Promise((resolve) => setTimeout(resolve, 1600));
         }
         if (token !== playbackToken) return;
         if (ready?.state !== 'ready') throw Error('La fuente tardó demasiado. Prueba otra con más seeders.');
         vodPreviewPlaylist = ready.url;
-        setStatus('Streaming VOD listo. Preparando los primeros segundos…');
+        setVodProgress();
         vodSession.remux = false;
         for (const id of ['vod-seek', 'vod-back', 'vod-forward']) $('#' + id).title = '';
         // Chromium/Brave may report native HLS support despite failing to
@@ -623,7 +626,7 @@ function mountPlayer(session, account) {
             const startupTimer = setTimeout(() => {
               if (startupComplete || token !== playbackToken) return;
               const reason = vodHlsErrorText ||
-                'No llegó el primer segmento reproducible desde Ubuntu. Comprueba los seeders o prueba otra fuente.';
+                'La película está tardando demasiado en cargar. Prueba otra fuente.';
               vodHlsErrorText = reason;
               startupComplete = true;
               video.removeEventListener('error', onStartupVideoError);
@@ -675,7 +678,7 @@ function mountPlayer(session, account) {
                   details.type === Hls.ErrorTypes.MEDIA_ERROR)) {
                 vodHlsFailures++;
                 setLoading(true);
-                setStatus('Recuperando streaming VOD (' + vodHlsFailures + '/2)…');
+                setVodProgress('Reconectando…');
                 if (details.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
                 else {
                   clearTimeout(vodHlsRecoveryTimer);
@@ -694,7 +697,7 @@ function mountPlayer(session, account) {
             instance.once(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(ready.url));
             instance.once(Hls.Events.MANIFEST_PARSED, () => {
               if (token === playbackToken && hls === instance) {
-                setStatus('Manifiesto HLS cargado. Esperando el primer segmento de vídeo…');
+                setVodProgress();
               }
             });
             instance.attachMedia(video);
@@ -1128,7 +1131,6 @@ function mountPlayer(session, account) {
     if (vodSession && !pageUnloading) {
       if (shouldFallbackToCompatibleAudio(vodSession.source, vodSession.compatibleAudio, video.error?.code)) {
         const { source, title, navigation } = vodSession;
-        setStatus('Activando automáticamente el streaming con audio compatible…');
         playVod({ source, title, navigation, compatibleAudio: true });
         return;
       }
