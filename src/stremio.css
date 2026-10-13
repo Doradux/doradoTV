@@ -250,7 +250,7 @@
 .sa-sources-loading-progress>span {
   display: block; height: 100%; width: 32%; border-radius: inherit;
   background: linear-gradient(90deg, transparent, #eecb82 35%, #f5dfa8 65%, transparent);
-  animation: sa-search-track 2.15s ease-in-out infinite;
+  animation: sa-search-track 2.15s linear infinite;
 }
 .sa-sources-loading-items { display: flex; flex-wrap: wrap; gap: 9px; }
 .sa-source-skeleton {
@@ -266,9 +266,10 @@
 .sa-skeleton-content { display: flex; flex: 1 1 0; flex-direction: column; gap: 9px; padding-top: 3px; min-width: 0; }
 .sa-skeleton-line {
   display: block; height: 7px; border-radius: 20px;
-  background: linear-gradient(95deg, rgba(166,180,201,.09) 0%, rgba(207,216,226,.21) 45%, rgba(166,180,201,.09) 90%);
-  background-size: 220% 100%; animation: sa-skeleton-shimmer 1.9s ease-in-out infinite;
-  animation-delay: calc(var(--skeleton-index) * .14s);
+  background: linear-gradient(90deg, rgba(166,180,201,.09) 0%, rgba(207,216,226,.21) 45%, rgba(166,180,201,.09) 90%);
+  background-size: 200% 100%; background-repeat: repeat-x;
+  animation: sa-skeleton-shimmer 1.9s linear infinite;
+  animation-delay: calc(var(--skeleton-index) * -.14s);
 }
 .sa-skeleton-title { width: 69%; height: 9px; }
 .sa-skeleton-subtitle { width: 96%; }
@@ -277,7 +278,13 @@
 @keyframes sa-search-ring { 50% { transform: scale(1.10); opacity: .4; } }
 @keyframes sa-search-dot { 0%, 65%, 100% { opacity: .27; transform: translateY(0); } 32% { opacity: 1; transform: translateY(-3px); } }
 @keyframes sa-search-track { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
-@keyframes sa-skeleton-shimmer { to { background-position-x: -220%; } }
+/* A 200%-wide repeating gradient shifts exactly one complete image tile:
+   200% to 0% background-position equals one image width. Both endpoints
+   therefore paint identically, avoiding the flash at every loop boundary. */
+@keyframes sa-skeleton-shimmer {
+  from { background-position-x: 200%; }
+  to { background-position-x: 0%; }
+}
 @media (max-width: 520px) {
   .sa-sources-loading { padding: 13px; border-radius: 13px; }
   .sa-sources-loading-icon { width: 39px; height: 39px; flex-basis: 39px; }
@@ -301,9 +308,10 @@
 .sa-search-placeholder { min-width:0; display:flex; flex-direction:column; gap:9px; }
 .sa-search-poster-shimmer {
   width:100%; aspect-ratio:2/3; border:1px solid rgba(203,217,238,.08); border-radius:13px;
-  background:linear-gradient(115deg,#202b3a 10%,#334152 45%,#202b3a 85%);
-  background-size:240% 100%; animation:sa-skeleton-shimmer 2s ease-in-out infinite;
-  animation-delay:calc(var(--skeleton-index) * .09s);
+  background:linear-gradient(90deg,#202b3a 10%,#334152 45%,#202b3a 85%);
+  background-size:200% 100%; background-repeat:repeat-x;
+  animation:sa-skeleton-shimmer 1.9s linear infinite;
+  animation-delay:calc(var(--skeleton-index) * -.09s);
 }
 .sa-search-placeholder .sa-skeleton-title { margin-top:1px; width:80%; }
 .sa-search-placeholder .sa-skeleton-subtitle { width:45%; }
@@ -313,8 +321,9 @@
 .sa-detail-loading-poster {
   height:180px; width:120px; max-width:55%; aspect-ratio:2/3;
   border:1px solid rgba(229,199,136,.17); border-radius:11px;
-  background:linear-gradient(120deg,#192535,#364050,#192535); background-size:220% 100%;
-  animation:sa-skeleton-shimmer 2.1s ease-in-out infinite;
+  background:linear-gradient(90deg,#192535,#364050,#192535);
+  background-size:200% 100%; background-repeat:repeat-x;
+  animation:sa-skeleton-shimmer 1.9s linear infinite;
 }
 .sa-detail-loading-info { display:flex; flex-direction:column; align-items:flex-start; gap:9px; min-width:0; flex:1 1 0; }
 .sa-detail-loading-eyebrow { color:#dfbb72; font-size:10px; font-weight:800; letter-spacing:.16em; }
