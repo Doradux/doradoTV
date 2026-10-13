@@ -330,7 +330,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       }
       return;
     }
-    const vodMedia = url.pathname.match(/^\/vod\/([0-9a-f-]{36})\/(index\.m3u8|segment_([0-9]+)\.ts)$/);
+    const vodMedia = url.pathname.match(/^\/vod\/([0-9a-f-]{36})\/(index\.m3u8|segment_([0-9]+)\.ts|thumb_([0-9]+)\.jpg)$/);
     if (vodMedia && (request.method === 'GET' || request.method === 'HEAD')) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       const id = vodMedia[1], token = url.searchParams.get('token');
@@ -340,6 +340,18 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
           response.writeHead(200, { ...cors, 'Content-Type': 'application/vnd.apple.mpegurl',
             'Content-Length': String(Buffer.byteLength(playlist)), 'Cache-Control': 'private, no-store' });
           response.end(request.method === 'HEAD' ? undefined : playlist);
+        } else if (vodMedia[4] !== undefined) {
+          const file = await vod.thumbnail(id, token, Number(vodMedia[4]));
+          const size = statSync(file).size;
+          response.writeHead(200, { ...cors, 'Content-Type': 'image/jpeg',
+            'Content-Length': String(size), 'Cache-Control': 'private, max-age=300',
+            'X-Content-Type-Options': 'nosniff' });
+          if (request.method === 'HEAD') response.end();
+          else {
+            const stream = createReadStream(file);
+            stream.on('error', () => response.destroy());
+            stream.pipe(response);
+          }
         } else {
           const file = await vod.segment(id, token, Number(vodMedia[3]));
           const size = statSync(file).size;

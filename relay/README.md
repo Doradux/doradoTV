@@ -128,3 +128,18 @@ coincidentes comparten un único proceso FFmpeg y una caché común en
 - Sigue siendo necesario que TorBox proporcione enlaces HTTPS con soporte
   HTTP Range, o que exista al menos un seeder para los torrents. No
   depende de ningún servicio externo de transcodificación.
+
+### Miniaturas de la línea de tiempo
+
+- Para fuentes VOD del relay, al pasar el ratón por la barra de tiempo se solicita
+  una miniatura JPEG de 320×180 como máximo. Se redondea a tramos de 20 s,
+  se genera con un único FFmpeg (25 s de timeout) y se cachea por película
+  para todos los espectadores, sin mover la reproducción actual.
+- La URL `/vod/<session>/thumb_<slot>.jpg?token=<token>` requiere el mismo
+  token temporal de la lista HLS. No expone la fuente original ni los tickets.
+- Las fuentes HTTPS directas con permiso de audio compatible pueden abrir
+  una sesión VOD adicional solo cuando el usuario pide una miniatura. Otras
+  fuentes sin permiso de relay muestran el tiempo sin captura de imagen.
+- En el navegador las solicitudes se agrupan con 220 ms de espera para no
+  saturar el servidor al mover rápidamente el cursor. No hay miniaturas en
+  los canales M3U de directo.

@@ -107,7 +107,26 @@ test('two viewers independently seek and share converted AC3-to-AAC VOD segments
       assert.equal(resSame.status,200);
       assert.deepEqual(Buffer.from(await resSame.arrayBuffer()),seg0);
       assert.equal(encoded,2,'Segment conversion shared');
+      const imageA=sa.playlist_url.replace('index.m3u8','thumb_0.jpg');
+      const imageB=sb.playlist_url.replace('index.m3u8','thumb_0.jpg');
+      const [thumbA,thumbB]=await Promise.all([
+        fetch(imageA,{headers:origin}),fetch(imageB,{headers:origin}),
+      ]);
+      assert.equal(thumbA.status,200,await thumbA.clone().text().then(t=>t.slice(0,70)));
+      assert.equal(thumbB.status,200);
+      assert.equal(thumbA.headers.get('content-type'),'image/jpeg');
+      const jpg=Buffer.from(await thumbA.arrayBuffer());
+      assert(jpg.length>100 && jpg.length<256*1024);
+      assert.equal(jpg[0],0xff); assert.equal(jpg[1],0xd8);
+      assert.deepEqual(Buffer.from(await thumbB.arrayBuffer()),jpg);
+      assert.equal(encoded,3,'Preview generated only once for both spectators');
+      assert.equal((await fetch(imageA.replace('token='+new URL(sa.playlist_url).searchParams.get('token'),
+        'token=invalid'),{headers:origin})).status,503);
+      assert.equal((await fetch(sa.playlist_url.replace('index.m3u8','thumb_999.jpg'),
+        {headers:origin})).status,503);
       await post('/vod/stop',{session_id:a.session_id,user_id:'viewer1'});
+      assert.equal((await fetch(imageA,{headers:origin})).status,503);
+      assert.equal((await fetch(imageB,{headers:origin})).status,200);
       assert.equal((await fetch(first,{headers:origin})).status,503);
       assert.equal((await fetch(late,{headers:origin})).status,200);
       assert(opens>=2);
@@ -178,6 +197,14 @@ test('on-demand VOD reads a real torrent using seekable WebTorrent pieces', { ti
     const bytes=Buffer.from(await res.arrayBuffer());
     assert(bytes.length>2000);
     assert.equal(bytes[0],0x47);
+    const thumbnail=status.playlist_url.replace('index.m3u8','thumb_0.jpg');
+    const thumbResult=await fetch(thumbnail,{headers:{Origin:'http://127.0.0.1:5199'},
+      signal:AbortSignal.timeout(30000)});
+    assert.equal(thumbResult.status,200);
+    const jpeg=Buffer.from(await thumbResult.arrayBuffer());
+    assert(jpeg.length>100);
+    assert.equal(jpeg[0],0xff);
+    assert.equal(jpeg[1],0xd8);
     await post('/vod/stop',{session_id:a.session_id,user_id:'alice'});
     assert.equal((await fetch(segment,{headers:{Origin:'http://127.0.0.1:5199'}})).status,200);
   } finally {

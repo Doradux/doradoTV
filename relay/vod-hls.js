@@ -6,6 +6,7 @@ import { lookup } from 'node:dns/promises';
 import { openDirectMedia, validateDirectMediaUrl } from './direct-audio.js';
 
 export const VOD_SEGMENT_SECONDS = 8;
+export const VOD_THUMBNAIL_SECONDS = 20;
 const SESSION_AGE = 4 * 60 * 60 * 1000;
 const SESSION_IDLE = 12 * 60 * 1000;
 const SOURCE_IDLE = 3 * 60 * 1000;
@@ -72,6 +73,9 @@ export class VodHls {
     this.sessions = new Map();
     this.queue = [];
     this.active = 0;
+    this.previewJobs = new Map();
+    this.previewQueue = [];
+    this.previewRunning = false;
     this.closed = false;
   }
   async start({ url, torrentHash, fileIdx, userId, origin }) {
@@ -223,6 +227,53 @@ export class VodHls {
       throw Error('Segmento de vídeo no disponible.');
     return this.ensureSegment(source, index);
   }
+  thumbnail(id, token, index) {
+    const { source } = this.session(id, token);
+    if (source.state !== 'ready' || !Number.isSafeInteger(index) || index < 0 ||
+        index >= Math.ceil(source.duration / VOD_THUMBNAIL_SECONDS))
+      throw Error('Miniatura no disponible.');
+    const path = join(this.directory, source.key + '_thumb_' + index + '.jpg');
+    if (existsSync(path) && statSync(path).size > 100) {
+      // Cached frames are shared between viewers and don't require re-encoding.
+      return Promise.resolve(path);
+    }
+    const key = source.key + ':' + index;
+    if (this.previewJobs.has(key)) return this.previewJobs.get(key);
+    if (this.previewQueue.length >= 12) throw Error('Demasiadas miniaturas pendientes.');
+    const pending = new Promise((resolve, reject) => {
+      this.previewQueue.push({ source, index, path, resolve, reject });
+      this.drainPreviewQueue();
+    });
+    this.previewJobs.set(key, pending);
+    pending.finally(() => this.previewJobs.delete(key)).catch(() => {});
+    return pending;
+  }
+  drainPreviewQueue() {
+    if (this.closed || this.previewRunning || !this.previewQueue.length) return;
+    const job = this.previewQueue.shift();
+    this.previewRunning = true;
+    this.makeThumbnail(job.source, job.index, job.path)
+      .then(job.resolve, job.reject)
+      .finally(() => { this.previewRunning = false; this.drainPreviewQueue(); });
+  }
+  async makeThumbnail(source, index, path) {
+    const time = Math.min(source.duration - 0.1, index * VOD_THUMBNAIL_SECONDS + 0.5);
+    const temp = path + '.' + randomUUID() + '.part';
+    try {
+      await this.exec(this.ffmpeg, [
+        '-hide_banner', '-nostdin', '-loglevel', 'error',
+        '-ss', String(Math.max(0, time)), '-i', this.proxyUrl(source),
+        '-map', '0:v:0', '-frames:v', '1', '-an', '-sn', '-dn',
+        '-vf', 'scale=w=min(320\\,iw):h=min(180\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2',
+        '-threads', '1', '-q:v', '6', '-f', 'image2', '-y', temp,
+      ], 25000);
+      if (!existsSync(temp) || statSync(temp).size < 100 || statSync(temp).size > 256 * 1024)
+        throw Error('La miniatura generada no es válida.');
+      renameSync(temp, path);
+      this.evict();
+      return path;
+    } finally { rmSync(temp, { force: true }); }
+  }
   ensureSegment(source, index) {
     const path = join(this.directory, source.key + '_' + index + '.ts');
     if (existsSync(path) && statSync(path).size > 100) {
@@ -275,7 +326,7 @@ export class VodHls {
     } finally { rmSync(temp, { force: true }); }
   }
   evict() {
-    const files = readdirSync(this.directory).filter((name) => /^[a-f0-9]{64}_[0-9]+\.ts$/.test(name))
+    const files = readdirSync(this.directory).filter((name) => /^[a-f0-9]{64}_(?:[0-9]+\.ts|thumb_[0-9]+\.jpg)$/.test(name))
       .map((name) => {
         const path = join(this.directory, name);
         const stat = statSync(path);
@@ -313,6 +364,8 @@ export class VodHls {
     this.closed = true;
     for (const { reject } of this.queue) reject(Error('Relay apagado.'));
     this.queue.length = 0;
+    for (const { reject } of this.previewQueue) reject(Error('Relay apagado.'));
+    this.previewQueue.length = 0;
     for (const source of this.sources.values())
       if (source.torrentId) this.torrentRelay.stop(source.torrentId, source.torrentUser);
     this.sessions.clear();
