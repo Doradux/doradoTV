@@ -60,10 +60,8 @@ function mountPlayer(session, account) {
               <div class="vod-seek-track">
                 <input id="vod-seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición de reproducción">
                 <div id="vod-seek-preview" class="vod-seek-preview" hidden aria-hidden="true">
-                  <div class="vod-seek-preview-frame">
-                    <img alt="" decoding="async" hidden referrerpolicy="no-referrer">
-                    <span data-preview-state>Preparando miniatura…</span>
-                  </div>
+                  <img alt="" decoding="async" hidden referrerpolicy="no-referrer">
+                  <span data-preview-state>Preparando miniatura…</span>
                   <span class="vod-seek-preview-time" data-preview-time>00:00</span>
                 </div>
               </div>

@@ -36,6 +36,7 @@ export function createVodTimelinePreview(input, preview, {
     generation++;
     activeSlot = -1;
     preview.hidden = true;
+    preview.classList.remove('has-image');
     clearTimeout(timer);
     timer = null;
   };
@@ -61,6 +62,7 @@ export function createVodTimelinePreview(input, preview, {
     const slot = thumbnailSlot(item.time, range.duration);
     if (slot === activeSlot) return;
     activeSlot = slot;
+    preview.classList.remove('has-image');
     thumb.hidden = true;
     stateLabel.hidden = false;
     stateLabel.textContent = 'Preparando miniatura…';
@@ -77,17 +79,22 @@ export function createVodTimelinePreview(input, preview, {
         const url = thumbnailUrl(playlist, item.time, range.duration);
         if (!url) throw Error('Sin vista previa.');
         if (url === lastImage && thumb.complete && thumb.naturalWidth) {
-          thumb.hidden = false; stateLabel.hidden = true; return;
+          thumb.hidden = false;
+          preview.classList.add('has-image');
+          stateLabel.hidden = true;
+          return;
         }
         thumb.onload = () => {
           if (version !== generation) return;
           lastImage = url;
           thumb.hidden = false;
+          preview.classList.add('has-image');
           stateLabel.hidden = true;
         };
         thumb.onerror = () => {
           if (version !== generation) return;
           thumb.hidden = true;
+          preview.classList.remove('has-image');
           stateLabel.hidden = false;
           stateLabel.textContent = 'Vista previa no disponible';
         };

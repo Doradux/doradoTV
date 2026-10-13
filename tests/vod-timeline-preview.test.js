@@ -34,6 +34,17 @@ test('player exposes a floating timeline thumbnail with no separate seek on hove
   assert.match(main,/id="vod-seek-preview"/);
   assert.match(main,/createVodTimelinePreview/);
   assert.match(main,/vodPreviewPlaylist = ready.url/);
-  assert.match(css,/\.vod-seek-preview-frame/);
   assert.match(css,/\.vod-seek-preview\[hidden\]/);
+  assert.match(main,/<div id="vod-seek-preview"[^>]*>\s*<img[^>]*>\s*<span data-preview-state>/);
+  assert.doesNotMatch(main, /class="vod-seek-preview-frame"/,
+    'The preview image must not be nested inside an extra frame');
+  assert.doesNotMatch(css, /\.vod-seek-preview-frame/,
+    'No extra inset border, padding or decorative frame');
+  assert.match(css, /\.vod-seek-preview\.has-image\s*\{\s*aspect-ratio:auto;/);
+  assert.match(css, /\.vod-seek-preview > img\s*\{[^}]*width:100%; height:auto; object-fit:contain;/);
+  assert.match(css, /\.vod-seek-preview-time\s*\{[^}]*position:absolute;/);
+  assert.match(css, /\.vod-seek-preview\s*\{[^}]*overflow:hidden;/);
+  const ui=readFileSync(new URL('../src/vod-timeline-preview.js',import.meta.url),'utf8');
+  assert.match(ui,/preview\.classList\.add\('has-image'\)/);
+  assert.match(ui,/preview\.classList\.remove\('has-image'\)/);
 });
