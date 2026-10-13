@@ -18,6 +18,7 @@ import { setupRemotePlayback } from './remote-playback.js';
 import { mountRoomAddons } from './stremio-ui.js';
 import { formatPlaybackTime, seekTarget, vodSeekRange, timeFromSlider, sliderFromTime } from './vod-utils.js';
 import { setupFullscreenControls } from './fullscreen-controls.js';
+import { vodHlsErrorMessage, vodMediaErrorMessage } from './vod-playback-errors.js';
 import { mountPortal, mountDashboard, mountRoomSettings } from './rooms-ui.js';
 
 const app = document.querySelector('#app');
@@ -184,6 +185,9 @@ function mountPlayer(session, account) {
   let vodNavigation = {};
   let torrentSessionId = null;
   let vodHlsSessionId = null;
+  let vodHlsErrorText = '';
+  let vodHlsFailures = 0;
+  let vodHlsRecoveryTimer = null;
   let directAudioSessionId = null;
   let torrentHeartbeat = null;
   let torrentWait = null;
@@ -276,6 +280,10 @@ function mountPlayer(session, account) {
   }
   function stop() {
     playbackToken += 1;
+    clearTimeout(vodHlsRecoveryTimer);
+    vodHlsRecoveryTimer = null;
+    vodHlsErrorText = '';
+    vodHlsFailures = 0;
     if (torrentWait) { clearTimeout(torrentWait.id); torrentWait.resolve(); torrentWait = null; }
     if (torrentHeartbeat) { clearInterval(torrentHeartbeat); torrentHeartbeat = null; }
     if (vodHlsSessionId) {
@@ -449,6 +457,8 @@ function mountPlayer(session, account) {
     const token = playbackToken;
     active = null;
     vodSession = { source, title, navigation, compatibleAudio, remux: false };
+    vodHlsErrorText = '';
+    vodHlsFailures = 0;
     const canConvertAudio = source?.kind === 'https' &&
       typeof source.url === 'string' && !!source.audioTicket && !/\.m3u8(?:$|[?#])/i.test(source.url);
     $('#vod-audio').hidden = !canConvertAudio;
@@ -495,21 +505,54 @@ function mountPlayer(session, account) {
           const { default: Hls } = await import('hls.js');
           if (token !== playbackToken) return;
           if (!Hls.isSupported()) throw Error('Tu navegador no admite reproducción HLS.');
-          hls = new Hls({ maxBufferLength: 24, maxMaxBufferLength: 45 });
+          const instance = new Hls({ maxBufferLength: 24, maxMaxBufferLength: 45 });
+          hls = instance;
           await new Promise((resolve, reject) => {
-            hls.on(Hls.Events.ERROR, (_, details) => {
-              if (!details.fatal) return;
-              if (details.type === Hls.ErrorTypes.NETWORK_ERROR && details.response?.code === 503) {
-                setStatus('El servidor está preparando un segmento. Reintentando…');
-                hls.startLoad();
+            let manifestReady = false;
+            instance.on(Hls.Events.FRAG_BUFFERED, () => {
+              if (token !== playbackToken || hls !== instance) return;
+              const wasRecovering = vodHlsFailures > 0;
+              vodHlsFailures = 0;
+              vodHlsErrorText = '';
+              if (wasRecovering) { setLoading(false); setStatus(''); $('#retry-video').hidden = true; }
+            });
+            // Keep this handler installed after the manifest resolves: fragment
+            // or decoder failures usually occur later, during video.play().
+            instance.on(Hls.Events.ERROR, (_event, details) => {
+              if (!details.fatal || token !== playbackToken || hls !== instance) return;
+              const reason = vodHlsErrorMessage(details);
+              vodHlsErrorText = reason;
+              const code = Number(details.response?.code) || 0;
+              console.warn('[vod] HLS playback error', {
+                type: details.type, details: details.details, httpStatus: code,
+                segment: Number.isInteger(details.frag?.sn) ? details.frag.sn : undefined,
+              });
+              if (vodHlsFailures < 2 && (details.type === Hls.ErrorTypes.NETWORK_ERROR ||
+                  details.type === Hls.ErrorTypes.MEDIA_ERROR)) {
+                vodHlsFailures++;
+                setLoading(true);
+                setStatus('Recuperando streaming VOD (' + vodHlsFailures + '/2)…');
+                if (details.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
+                else {
+                  clearTimeout(vodHlsRecoveryTimer);
+                  vodHlsRecoveryTimer = setTimeout(() => {
+                    if (token === playbackToken && hls === instance) instance.startLoad();
+                  }, 1200 * vodHlsFailures);
+                }
                 return;
               }
-              reject(Error('No se pudo reproducir el segmento de vídeo. ' + (details.details || '')));
-              setStatus('No se pudo cargar un segmento del vídeo.', true);
+              setConnecting(false);
+              setLoading(false);
+              setStatus(reason, true);
+              $('#retry-video').hidden = false;
+              if (!manifestReady) reject(Error(reason));
             });
-            hls.once(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(ready.url));
-            hls.once(Hls.Events.MANIFEST_PARSED, resolve);
-            hls.attachMedia(video);
+            instance.once(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(ready.url));
+            instance.once(Hls.Events.MANIFEST_PARSED, () => {
+              manifestReady = true;
+              resolve();
+            });
+            instance.attachMedia(video);
           });
         }
       } else if (source.url) {
@@ -560,9 +603,11 @@ function mountPlayer(session, account) {
       setConnecting(false); setLoading(false);
       const unsupportedCodec = vodSession?.remux &&
         (video.error?.code === 4 || error?.name === 'NotSupportedError');
-      setStatus(unsupportedCodec
+      setStatus(vodHlsErrorText || (unsupportedCodec
         ? 'El MKV se ha convertido, pero tu navegador no admite el códec de esta versión. Prueba una fuente H.264 o VP9.'
-        : error.message || 'No se pudo iniciar el vídeo.', true);
+        : error?.name === 'NotSupportedError'
+          ? vodMediaErrorMessage({ code: 4 }, { kind: source.kind })
+          : error.message || 'No se pudo iniciar el vídeo.'), true);
       $('#retry-video').hidden = false;
     }
   }
@@ -917,11 +962,15 @@ function mountPlayer(session, account) {
   video.addEventListener('error', () => {
     if (vodSession && !pageUnloading) {
       setConnecting(false); setLoading(false);
-      setStatus(vodSession.compatibleAudio
-        ? 'No se pudo preparar el audio compatible de esta fuente. Prueba otra versión o pulsa Audio original.'
-        : vodSession.remux && video.error?.code === 4
-          ? 'El códec del vídeo no es compatible con este navegador. Prueba una versión H.264 o VP9.'
-          : 'La reproducción se interrumpió. Si ves imagen pero no escuchas, pulsa Audio compatible.', true);
+      const error = vodMediaErrorMessage(video.error, {
+        kind: vodSession.source?.kind,
+        compatibleAudio: vodSession.compatibleAudio,
+        hlsError: vodHlsErrorText,
+      });
+      console.warn('[vod] browser media error', {
+        code: video.error?.code, hlsDiagnosticsAvailable: Boolean(vodHlsErrorText),
+      });
+      setStatus(error, true);
       $('#retry-video').hidden = false;
       return;
     }
