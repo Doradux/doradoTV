@@ -209,3 +209,82 @@
 #vod-audio[aria-pressed="true"] { background:#c9973a28; border-color:#d8b06ca8; }
 #vod-audio[hidden] { display:none!important; }
 @media(max-width:600px) { #vod-audio { flex:0 0 auto; font-size:10px; padding:5px 8px; } }
+
+/* Progressive, non-blocking source discovery state. Matches cinema's dark/gold palette. */
+.sa-sources-loading {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(234,196,119,.24);
+  border-radius: 16px;
+  background: linear-gradient(150deg, rgba(235,191,111,.075), rgba(19,27,40,.94) 42%, rgba(12,18,28,.97));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 14px 34px rgba(0,0,0,.13);
+}
+.sa-sources-loading-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sa-sources-loading-icon {
+  position: relative; display: grid; place-items: center; flex: 0 0 44px;
+  width: 44px; height: 44px; border-radius: 13px;
+  color: #f2ce89; border: 1px solid rgba(234,196,119,.26);
+  background: rgba(238,194,116,.10);
+}
+.sa-sources-loading-icon::after {
+  content: ""; position: absolute; inset: -4px; border: 1px solid rgba(238,194,116,.13);
+  border-radius: 16px; animation: sa-search-ring 2.3s ease-in-out infinite;
+}
+.sa-sources-loading-copy { display: flex; flex: 1 1 0; min-width: 0; flex-direction: column; gap: 4px; }
+.sa-sources-loading-copy strong { font-size: 13px; font-weight: 750; letter-spacing: .01em; color: #f3eee4; }
+.sa-sources-loading-copy small { font-size: 11px; line-height: 1.45; color: #a9b5c5; }
+.sa-sources-loading-pulse { display: flex; flex: 0 0 auto; gap: 4px; align-items: center; }
+.sa-sources-loading-pulse i {
+  width: 5px; height: 5px; border-radius: 50%; background: #edc57b;
+  animation: sa-search-dot 1.3s ease-in-out infinite;
+}
+.sa-sources-loading-pulse i:nth-child(2) { animation-delay: .16s; }
+.sa-sources-loading-pulse i:nth-child(3) { animation-delay: .32s; }
+.sa-sources-loading-progress {
+  height: 2px; margin: 16px 0; border-radius: 5px;
+  background: rgba(238,194,116,.12); overflow: hidden;
+}
+.sa-sources-loading-progress>span {
+  display: block; height: 100%; width: 32%; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, #eecb82 35%, #f5dfa8 65%, transparent);
+  animation: sa-search-track 2.15s ease-in-out infinite;
+}
+.sa-sources-loading-items { display: flex; flex-wrap: wrap; gap: 9px; }
+.sa-source-skeleton {
+  display: flex; align-items: flex-start; flex: 1 1 210px; min-width: 0;
+  max-width: min(100%,340px); gap: 10px; min-height: 75px;
+  padding: 12px; border: 1px solid rgba(255,255,255,.075);
+  border-radius: 11px; background: rgba(255,255,255,.025);
+}
+.sa-skeleton-play {
+  display: block; flex: 0 0 20px; width: 20px; height: 20px;
+  border-radius: 7px; background: rgba(235,194,115,.15);
+}
+.sa-skeleton-content { display: flex; flex: 1 1 0; flex-direction: column; gap: 9px; padding-top: 3px; min-width: 0; }
+.sa-skeleton-line {
+  display: block; height: 7px; border-radius: 20px;
+  background: linear-gradient(95deg, rgba(166,180,201,.09) 0%, rgba(207,216,226,.21) 45%, rgba(166,180,201,.09) 90%);
+  background-size: 220% 100%; animation: sa-skeleton-shimmer 1.9s ease-in-out infinite;
+  animation-delay: calc(var(--skeleton-index) * .14s);
+}
+.sa-skeleton-title { width: 69%; height: 9px; }
+.sa-skeleton-subtitle { width: 96%; }
+.sa-skeleton-caption { width: 45%; }
+.sa-sources-loading-footnote { margin: 14px 0 0; color: #828f9f; font-size: 10px; line-height: 1.5; }
+@keyframes sa-search-ring { 50% { transform: scale(1.10); opacity: .4; } }
+@keyframes sa-search-dot { 0%, 65%, 100% { opacity: .27; transform: translateY(0); } 32% { opacity: 1; transform: translateY(-3px); } }
+@keyframes sa-search-track { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
+@keyframes sa-skeleton-shimmer { to { background-position-x: -220%; } }
+@media (max-width: 520px) {
+  .sa-sources-loading { padding: 13px; border-radius: 13px; }
+  .sa-sources-loading-icon { width: 39px; height: 39px; flex-basis: 39px; }
+  .sa-source-skeleton { flex-basis: 100%; max-width: 100%; min-height: 65px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sa-sources-loading-icon::after, .sa-sources-loading-pulse i,
+  .sa-sources-loading-progress>span, .sa-skeleton-line { animation: none !important; }
+  .sa-sources-loading-progress>span { width: 100%; opacity: .55; }
+}

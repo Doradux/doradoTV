@@ -2,6 +2,7 @@ import { Film, Puzzle, Search, Play, ArrowLeft, Trash2, Plus, X } from 'lucide';
 import { iconSvg, escapeHtml } from './ui.js';
 import { seasonGroups } from './vod-utils.js';
 import { browserManifestUrl, browserResourceUrl, browserAddonJson, browserSupports } from './stremio-browser.js';
+import { sourcesLoadingMarkup } from './stremio-loading.js';
 import './stremio.css';
 const e = escapeHtml;
 const cover = (m) => m.poster ? `<img src="${e(m.poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="sa-no-poster">${iconSvg(Film)}</span>`;
@@ -179,7 +180,10 @@ export function mountRoomAddons(app, session, { player }) {
   }
   async function loadStreams(id) {
     const token = ++state.streamToken;
-    $('#sa-streams').replaceChildren(); say('Buscando fuentes…', true);
+    const providers = 1 + publicAddons().filter((addon) => browserSupports(addon.manifest, 'stream', state.current.type, id)).length;
+    $('#sa-streams').innerHTML = sourcesLoadingMarkup(providers);
+    $('#sa-streams').setAttribute('aria-busy', 'true');
+    say('', true);
     try {
       const type = state.current.type;
       const browserStreams = publicAddons().filter((addon) => browserSupports(addon.manifest, 'stream', type, id))
@@ -197,8 +201,18 @@ export function mountRoomAddons(app, session, { player }) {
           <small>${e(s.title || (s.kind === 'torrent' ? 'Torrent' : 'Vídeo'))}</small>
           ${s.seeders == null ? '' : `<small>${s.seeders.toLocaleString('es')} seeders</small>`}</span></button>`).join('') ||
           '<p class="sa-muted">No hay fuentes disponibles.</p>';
-      say(!state.streams.length && results.some((result) => result.status === 'rejected' || result.value?.warnings?.length) ? 'No se pudieron consultar algunas fuentes. Comprueba CORS o prueba otra.' : '', true);
-    } catch (error) { if (token === state.streamToken) say(error.message, true); }
+      const hasErrors = results.some((result) => result.status === 'rejected' || result.value?.warnings?.length);
+      say(state.streams.length
+        ? `${state.streams.length} ${state.streams.length === 1 ? 'fuente encontrada' : 'fuentes encontradas'}${hasErrors ? ' · Algunos addons no respondieron.' : ''}`
+        : hasErrors ? 'No se pudieron consultar algunas fuentes. Comprueba CORS o prueba otra.' : '', true);
+    } catch (error) {
+      if (token === state.streamToken) {
+        $('#sa-streams').innerHTML = '<p class="sa-muted">No se pudieron cargar las fuentes.</p>';
+        say(error.message, true);
+      }
+    } finally {
+      if (token === state.streamToken) $('#sa-streams').setAttribute('aria-busy', 'false');
+    }
   }
   async function playSource(index) {
     const source = state.streams[index];
