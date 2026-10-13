@@ -82,7 +82,9 @@ export class VodHls {
     else if (!/^[a-f0-9]{40}$/.test(torrentHash || '') || (fileIdx != null &&
       (!Number.isSafeInteger(fileIdx) || fileIdx < 0 || fileIdx > 10000))) throw Error('Torrent inválido.');
     const sourceKey = direct ? 'url:' + url : 'torrent:' + torrentHash + ':' + (fileIdx ?? 'auto');
-    const key = hashKey(sourceKey);
+    // Segregate all cached segments by encoder settings. Already encoded 720p
+    // or 1080p segments must never be served under the new 1440p profile.
+    const key = hashKey('hls-1440p-crf20-aac192-v3:' + sourceKey);
     const id = randomUUID(), token = randomBytes(32).toString('hex');
     let source = this.sources.get(key);
     if (!source) {
@@ -260,9 +262,9 @@ export class VodHls {
       const args = ['-hide_banner','-nostdin','-loglevel','error',
         '-ss', String(offset), '-i', this.proxyUrl(source), '-t', String(duration),
         '-map','0:v:0','-map','0:a:0?', '-sn','-dn',
-        '-c:v','libx264','-preset','veryfast','-crf','25','-pix_fmt','yuv420p',
-        '-vf','scale=w=min(1280\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2',
-        '-threads','2','-c:a','aac','-ac','2','-b:a','128k',
+        '-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p',
+        '-vf','scale=w=min(2560\\,iw):h=min(1440\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2',
+        '-threads','2','-c:a','aac','-ac','2','-b:a','192k',
         '-output_ts_offset',String(offset),'-f','mpegts','-y',temp];
       await this.exec(this.ffmpeg, args, 85000);
       if (!existsSync(temp) || statSync(temp).size < 500) throw Error('Segmento vacío.');

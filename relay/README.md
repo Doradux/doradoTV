@@ -108,8 +108,10 @@ necesarias para cada segmento HLS de 8 segundos. Las peticiones de segmentos
 coincidentes comparten un único proceso FFmpeg y una caché común en
 `DORADO_RELAY_DIR/vod-hls`, limitada a 12 GiB por defecto.
 
-- El vídeo de salida se convierte a H.264 (hasta 720p) y el audio a AAC
-  estéreo cuando se activa el modo compatible; el resto de pistas se omiten.
+- El vídeo VOD se convierte a H.264 con un máximo de 2560×1440 (2K/QHD),
+  CRF 20 y sin ampliar las fuentes de menor resolución. El audio se convierte
+  a AAC estéreo a 192 kb/s. El perfil de codificación forma parte de la clave
+  de caché para evitar reutilizar los antiguos segmentos de 720p.
 - Los espectadores tienen sesiones y tokens independientes. El manifiesto VOD
   declara la duración completa y permite buscar otro minuto sin sincronizarlos.
 - Las fuentes HTTPS solo pueden solicitarse con un permiso firmado por
