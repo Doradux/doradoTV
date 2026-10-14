@@ -51,11 +51,13 @@ async function pinHttpChannel(value, resolver = lookup) {
   return { original: url.href, pinned: pinned.href, host: url.host };
 }
 
-async function inspectHttpTarget(target) {
+export async function inspectHttpTarget(target) {
   return new Promise((resolve, reject) => {
     const req = httpRequest(target.pinned, {
       method: 'GET',
-      headers: { Host: target.host, 'User-Agent': 'VLC/3.0.18', Range: 'bytes=0-0' },
+      // Live MPEG-TS streams are not necessarily seekable. Probe using the
+      // same plain GET as FFmpeg: a bytes=0-0 range may be rejected with 416.
+      headers: { Host: target.host, 'User-Agent': 'VLC/3.0.18' },
     }, (res) => {
       const result = { status: res.statusCode || 0, location: res.headers.location || null };
       res.destroy();
@@ -78,7 +80,8 @@ export async function resolveHttpChannel(value, resolver = lookup, inspect = ins
       continue;
     }
     if (response.status >= 200 && response.status < 300) return target;
-    throw new Error('El proveedor no acepta la conexión del relay.');
+    // Only report the response code, never the signed channel URL or credentials.
+    throw new Error(`El proveedor no acepta la conexión del relay (HTTP ${response.status}).`);
   }
   throw new Error('No se pudo resolver la emisión.');
 }

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { RelayRegistry } from '../relay/registry.js';
-import { createRelay, resolveHttpChannel } from '../relay/server.js';
+import { createRelay, inspectHttpTarget, resolveHttpChannel } from '../relay/server.js';
 import { providerFromChannel, providerStatus } from '../relay/provider.js';
 
 test('provider status decodes the current programme and estimates external connections', async () => {
@@ -55,6 +56,37 @@ test('relay pins validated public HTTP targets and rejects private addresses', a
       ? { status: 302, location: 'http://internal.example/private' }
       : { status: 200, location: null },
   ), /red pública/);
+});
+
+test('live HTTP probe uses a plain GET without unsupported byte ranges', async () => {
+  let capturedHeaders;
+  const server = createServer((request, response) => {
+    capturedHeaders = request.headers;
+    response.writeHead(request.headers.range ? 416 : 200);
+    response.end('stream-data');
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const result = await inspectHttpTarget({
+      pinned: `http://127.0.0.1:${server.address().port}/live.ts`,
+      host: 'provider.example',
+    });
+    assert.equal(result.status, 200);
+    assert.equal(capturedHeaders.host, 'provider.example');
+    assert.equal(capturedHeaders['user-agent'], 'VLC/3.0.18');
+    assert.equal(capturedHeaders.range, undefined);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('relay returns upstream HTTP errors without exposing channel secrets', async () => {
+  await assert.rejects(resolveHttpChannel(
+    'http://provider.example/live/user/secret-password/1.ts',
+    async () => [{ address: '1.1.1.1', family: 4 }],
+    async () => ({ status: 403, location: null }),
+  ), (error) => error.message.includes('HTTP 403') && !error.message.includes('secret-password'));
 });
 
 test('registry keeps registry.json untouched when a transaction does not change state', () => {
