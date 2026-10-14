@@ -21,6 +21,24 @@ const SEGMENT = /^segment_[0-9]{9,}\.ts$/;
 const DIRECT_LIVE_TS = /^\/(?:(?:live|play)\/)?[^/]+\/[^/]+\/\d+\.ts$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+// FFmpeg often includes full Xtream URLs (user/password) in stderr. Never
+// return or log raw stderr; classify only fixed, allowlisted diagnostics.
+export function classifyFfmpegFailure(output) {
+  const value = String(output || '');
+  const status = value.match(/(?:HTTP error|Server returned|HTTP\/\d(?:\.\d)?)\s*:?\s*(\d{3})\b/i)?.[1];
+  if (status) return `El proveedor ha rechazado la emisión (HTTP ${status}).`;
+  if (/redirection|redirect|moved permanently/i.test(value)) return 'El proveedor redirige la emisión y el relay no puede seguirla de forma segura.';
+  if (/connection refused/i.test(value)) return 'El proveedor ha rechazado la conexión TCP del relay.';
+  if (/connection timed out|timed out|timeout/i.test(value)) return 'La conexión de vídeo con el proveedor ha agotado el tiempo de espera.';
+  if (/connection reset by peer|connection reset/i.test(value)) return 'El proveedor ha cerrado la conexión de vídeo.';
+  if (/network is unreachable|no route to host/i.test(value)) return 'No se puede llegar al servidor de vídeo del proveedor.';
+  if (/stream map.*matches no streams|does not contain any stream/i.test(value)) return 'El proveedor no ha entregado una pista de vídeo válida.';
+  if (/invalid data found when processing input|could not find codec parameters/i.test(value)) return 'El proveedor no ha entregado un formato de vídeo reconocible.';
+  if (/option .* not found|unrecognized option/i.test(value)) return 'FFmpeg no admite una de las opciones de reproducción.';
+  if (/end of file|\bEOF\b/i.test(value)) return 'El proveedor ha cortado la emisión antes de entregar vídeo.';
+  return 'FFmpeg no pudo abrir la emisión; comprueba la disponibilidad del canal en el proveedor.';
+}
+
 function sameSecret(given, expected) {
   const a = Buffer.from(given || '');
   const b = Buffer.from(expected || '');
@@ -131,6 +149,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   writeFileSync(lock, String(process.pid));
   closeSync(lock);
   const processes = new Map();
+  const errorsByEmission = new Map();
   const torrents = torrentFactory || new TorrentRelay({
     directory, maxBytes: torrentMaxBytes, maxActive: torrentMaxActive,
   });
@@ -253,22 +272,35 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
         const child = processes.get(id);
         if (child) { child.kill('SIGTERM'); processes.delete(id); }
         rmSync(join(directory, id), { recursive: true, force: true });
-        if (now() - emission.last_viewer > 120) registry.transaction((value) => { delete value.emissions[id]; });
+        if (now() - emission.last_viewer > 120) {
+          errorsByEmission.delete(id);
+          registry.transaction((value) => { delete value.emissions[id]; });
+        }
         continue;
       }
       const output = join(directory, id);
       const playlist = join(output, 'index.m3u8');
       if (!processes.has(id)) {
         mkdirSync(output, { recursive: true, mode: 0o700 });
+        let stderr = '';
         const child = spawnProcess(ffmpeg, [
           '-nostdin', '-hide_banner', '-loglevel', 'error', '-rw_timeout', '15000000', '-user_agent', 'VLC/3.0.18',
           '-max_redirects', '0', '-headers', `Host: ${emission.host_header}\r\n`, '-i', emission.input_url,
           '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
           '-f', 'hls', '-hls_time', '4', '-hls_list_size', '6', '-hls_delete_threshold', '2',
           '-hls_flags', 'delete_segments+temp_file', '-hls_segment_filename', join(output, 'segment_%09d.ts'), playlist,
-        ], { stdio: 'ignore' });
-        child.on('error', () => { registry.transaction((value) => { if (value.emissions[id]) value.emissions[id].status = 'failed'; }); });
+        ], { stdio: ['ignore', 'ignore', 'pipe'] });
+        child.stderr?.on('data', (chunk) => {
+          stderr = (stderr + String(chunk)).slice(-16_384);
+        });
+        child.on('error', () => {
+          errorsByEmission.set(id, 'No se pudo iniciar FFmpeg en el servidor.');
+          registry.transaction((value) => { if (value.emissions[id]) value.emissions[id].status = 'failed'; });
+        });
         child.on('close', (code, signal) => {
+          const reason = classifyFfmpegFailure(stderr);
+          stderr = '';
+          if (code !== 0 && !errorsByEmission.has(id)) errorsByEmission.set(id, reason);
           let unexpected = false;
           registry.transaction((value) => {
             const current = value.emissions[id];
@@ -277,7 +309,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
               unexpected = true;
             }
           });
-          if (unexpected) console.warn(`[relay] FFmpeg terminó inesperadamente emission=${id} code=${code ?? 'null'} signal=${signal || 'none'}`);
+          if (unexpected) console.warn(`[relay] FFmpeg falló id=${id} code=${code ?? 'null'} reason=${reason}`);
         });
         processes.set(id, child);
         registry.transaction((value) => { if (value.emissions[id]) value.emissions[id].pid = child.pid || null; });
@@ -591,7 +623,9 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
             if (emission && !Object.values(state.sessions).some((session) => session.emission_id === result.emission_id)) emission.status = 'failed';
           });
           tick();
-          json(response, 503, { error: 'El relay no pudo preparar la emisión a tiempo.' }); return;
+          const detail = errorsByEmission.get(result.emission_id);
+          errorsByEmission.delete(result.emission_id);
+          json(response, 503, { error: detail || 'La emisión no ha entregado vídeo dentro del tiempo de inicio.' }); return;
         }
         json(response, 200, { session_id: result.id, emission_id: result.emission_id, playlist_url: `${requestOrigin(request)}/media/${result.id}/index.m3u8?token=${result.token}` }); return;
       }

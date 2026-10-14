@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { RelayRegistry } from '../relay/registry.js';
-import { createRelay, inspectHttpTarget, resolveHttpChannel } from '../relay/server.js';
+import { createRelay, inspectHttpTarget, resolveHttpChannel, classifyFfmpegFailure } from '../relay/server.js';
 import { providerFromChannel, providerStatus } from '../relay/provider.js';
 
 test('provider status decodes the current programme and estimates external connections', async () => {
@@ -116,6 +116,25 @@ test('registry keeps registry.json untouched when a transaction does not change 
     registry.transaction((state) => { state.worker_seen = 101; });
     assert.equal(JSON.parse(readFileSync(file, 'utf8')).worker_seen, 101);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('FFmpeg errors are classified without exposing account URLs', () => {
+  const source = 'http://provider.example/live/private-user/private-password/123.ts';
+  const cases = [
+    ['HTTP error 403 Forbidden', 'HTTP 403'],
+    ['Server returned 404 Not Found', 'HTTP 404'],
+    ['Connection refused', 'TCP'],
+    ['Connection timed out', 'tiempo de espera'],
+    ['Stream map 0:v:0 matches no streams', 'pista de vídeo'],
+    ['Invalid data found when processing input', 'formato de vídeo'],
+  ];
+  for (const [error, expected] of cases) {
+    const result = classifyFfmpegFailure(`${source}: ${error}`);
+    assert(result.includes(expected));
+    assert(!result.includes('private-user'));
+    assert(!result.includes('private-password'));
+    assert(!result.includes('provider.example'));
+  }
 });
 
 test('start waits until the HLS manifest is ready', async () => {
