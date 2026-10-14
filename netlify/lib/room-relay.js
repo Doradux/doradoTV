@@ -3,7 +3,8 @@ import { request as httpsRequest } from 'node:https';
 import ipaddr from 'ipaddr.js';
 import { RoomError } from './room-store.js';
 
-const MAX_REPLY = 96 * 1024, TIMEOUT = 8000;
+const MAX_REPLY = 96 * 1024, TIMEOUT = 8000, START_TIMEOUT = 22_000;
+const relayTimeout = (path) => path === '/start' ? START_TIMEOUT : TIMEOUT;
 const publicIp = (address) => {
   try { return ipaddr.process(address).range() === 'unicast'; } catch { return false; }
 };
@@ -35,6 +36,7 @@ async function publicPins(host, resolver = lookup) {
 // TLS is pinned to DNS-validated public IPs to reject rebinding, redirects and huge replies.
 export async function relayFetch(url, options = {}, { resolver = lookup, transport = httpsRequest } = {}) {
   const target = url instanceof URL ? url : new URL(url);
+  const requestTimeout = relayTimeout(target.pathname);
   if (target.protocol !== 'https:' || (target.port && target.port !== '443') || target.username || target.password)
     throw new RoomError('Destino de relay no permitido.', 403);
   const pins = await publicPins(target.hostname, resolver);
@@ -49,7 +51,7 @@ export async function relayFetch(url, options = {}, { resolver = lookup, transpo
           reject(error instanceof RoomError ? error : new RoomError('No se pudo contactar con el relay.', 503));
         };
         const req = transport(target, {
-          method: options.method || 'GET', headers: options.headers || {}, timeout: TIMEOUT,
+          method: options.method || 'GET', headers: options.headers || {}, timeout: requestTimeout,
           lookup: (_host, lookupOptions, callback) => callback(null,
             lookupOptions?.all ? [pin] : pin.address, pin.family),
         }, (res) => {
@@ -92,7 +94,7 @@ export function createRelayClient(input = null, fetcher = relayFetch) {
     let res;
     try {
       res = await fetcher(new URL(path, cfg.url), {
-        method, redirect: 'error', signal: AbortSignal.timeout(TIMEOUT),
+        method, redirect: 'error', signal: AbortSignal.timeout(relayTimeout(path)),
         headers: { Authorization: 'Bearer ' + cfg.secret, Accept: 'application/json',
           ...(payload ? { 'Content-Type': 'application/json' } : {}) },
         ...(payload ? { body: JSON.stringify(payload) } : {}),

@@ -97,6 +97,20 @@ test('SSRF-safe relay client refuses private DNS answers without making a networ
 });
 
 
+test('relay start gets a longer cold-start timeout than status checks', async () => {
+  const seen = [];
+  const transport = (_target, opts) => {
+    seen.push(opts.timeout);
+    const request = new EventEmitter();
+    request.end = () => process.nextTick(() => request.emit('error', new Error('mock failure')));
+    return request;
+  };
+  const options = { resolver: async () => [{ address: '1.1.1.1', family: 4 }], transport };
+  await assert.rejects(relayFetch('https://relay.example.com/status', {}, options));
+  await assert.rejects(relayFetch('https://relay.example.com/start', {}, options));
+  assert.deepEqual(seen, [8000, 22000]);
+});
+
 test('separate room relays receive isolated start and ping operations', async () => {
   const store = memoryBlobStore();
   await store.setJSON('account/' + owner.id, owner);

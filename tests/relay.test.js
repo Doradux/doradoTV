@@ -58,6 +58,19 @@ test('relay pins validated public HTTP targets and rejects private addresses', a
   ), /red pública/);
 });
 
+test('Xtream direct TS streams are DNS-pinned without opening an extra provider socket', async () => {
+  for (const path of ['/live/user/secret/123.ts', '/play/user/secret/123.ts', '/user/secret/123.ts']) {
+    const result = await resolveHttpChannel(`http://provider.example${path}`,
+      async () => [{ address: '1.1.1.1', family: 4 }],
+      async () => { throw new Error('Direct live playback must not make a probe request'); });
+    assert.equal(result.pinned, `http://1.1.1.1${path}`);
+    assert.equal(result.host, 'provider.example');
+  }
+  await assert.rejects(resolveHttpChannel('http://provider.example/live/user/secret/123.ts',
+    async () => [{ address: '127.0.0.1', family: 4 }],
+    async () => { throw new Error('Must not connect to private IP'); }), /red pública/);
+});
+
 test('live HTTP probe uses a plain GET without unsupported byte ranges', async () => {
   let capturedHeaders;
   const server = createServer((request, response) => {
@@ -83,7 +96,7 @@ test('live HTTP probe uses a plain GET without unsupported byte ranges', async (
 
 test('relay returns upstream HTTP errors without exposing channel secrets', async () => {
   await assert.rejects(resolveHttpChannel(
-    'http://provider.example/live/user/secret-password/1.ts',
+    'http://provider.example/playlist.m3u8?token=secret-password',
     async () => [{ address: '1.1.1.1', family: 4 }],
     async () => ({ status: 403, location: null }),
   ), (error) => error.message.includes('HTTP 403') && !error.message.includes('secret-password'));

@@ -14,8 +14,11 @@ import { VodHls } from './vod-hls.js';
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
 const STARTUP_TIMEOUT = 35;
-const START_READY_TIMEOUT_MS = 8_000;
+const START_READY_TIMEOUT_MS = 14_000;
 const SEGMENT = /^segment_[0-9]{9,}\.ts$/;
+// Xtream-style MPEG-TS live streams may allow only one active upstream socket.
+// FFmpeg must be the first and only request to those endpoints.
+const DIRECT_LIVE_TS = /^\/(?:(?:live|play)\/)?[^/]+\/[^/]+\/\d+\.ts$/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function sameSecret(given, expected) {
@@ -73,6 +76,9 @@ export async function resolveHttpChannel(value, resolver = lookup, inspect = ins
   let current = value;
   for (let redirects = 0; redirects <= 4; redirects += 1) {
     const target = await pinHttpChannel(current, resolver);
+    // A separate GET probe can consume the provider's only playback slot.
+    // Direct live TS URLs are already DNS-pinned; FFmpeg disables redirects.
+    if (DIRECT_LIVE_TS.test(new URL(target.original).pathname)) return target;
     const response = await inspect(target);
     if ([301, 302, 303, 307, 308].includes(response.status) && response.location) {
       if (redirects === 4) throw new Error('Demasiadas redirecciones del proveedor.');
