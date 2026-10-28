@@ -5,7 +5,7 @@ import {
   Play, Pause, Volume, Volume1, Volume2, VolumeX, PictureInPicture2, PictureInPicture,
   RectangleHorizontal, PanelRightClose, ChevronDown, Radio,
   Maximize, Minimize, Bookmark, TvMinimal, Upload, Check, Cast,
-  LogOut, LockKeyhole, X, FileUp, Search,
+  LogOut, LockKeyhole, X, FileUp, Trash2, Search,
   Settings2, DoorOpen, RefreshCw, SkipBack, SkipForward, RotateCcw, RotateCw,
 } from 'lucide';
 import { groupsFor, parsePlaylist } from './playlist.js';
@@ -112,7 +112,34 @@ function mountPlayer(session, account) {
         <span role="tooltip" class="pointer-events-none absolute bottom-14 left-0 hidden whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-lg group-hover:block group-focus-within:block">Ajustes de la sala</span>
       </div>
     </div>
-    <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title"><div class="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7"><div class="flex items-center justify-between gap-4"><div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div><button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button></div><p class="mt-3 text-sm text-slate-400">Sube un archivo .m3u de hasta 10 MB. Se guardará cifrado para esta sala; la lista actual se conserva si la subida falla.</p><form id="upload-form" class="mt-5 space-y-4"><div><label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label><input id="upload-file" type="file" accept=".m3u" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" /></div><p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p><button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button></form></div></div>
+    <div id="upload-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-labelledby="upload-title">
+      <div class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-700 bg-slate-900 p-5 shadow-2xl sm:p-7">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3 text-amber-400">${iconSvg(FileUp, 'h-6 w-6')}<h2 id="upload-title" class="text-xl font-bold text-white">Subir lista</h2></div>
+          <button id="upload-close" type="button" title="Cerrar" aria-label="Cerrar" class="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white">${iconSvg(X)}</button>
+        </div>
+        <p class="mt-3 text-sm text-slate-400">Sube un archivo .m3u de hasta 10 MB. Se guardará cifrado para esta sala; la lista actual se conserva si la subida falla.</p>
+        <form id="upload-form" class="mt-5 space-y-4">
+          <div>
+            <label for="upload-file" class="mb-1.5 block text-sm font-medium text-slate-200">Archivo de canales</label>
+            <input id="upload-file" type="file" accept=".m3u" required class="block w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600" />
+          </div>
+          <p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p>
+          <button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button>
+        </form>
+        <div id="upload-delete-section" class="mt-5 border-t border-slate-700 pt-4 ${session.hasPlaylist ? '' : 'hidden'}">
+          <p class="mb-3 text-sm text-slate-400">¿Ya no necesitas la lista guardada en esta sala?</p>
+          <button id="upload-delete-open" type="button" aria-expanded="false" aria-controls="upload-delete-confirm" class="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/50 px-4 py-2.5 text-sm font-semibold text-red-300 transition hover:bg-red-500/10 disabled:opacity-60">${iconSvg(Trash2, 'h-4 w-4')} Eliminar lista actual</button>
+          <div id="upload-delete-confirm" class="mt-3 hidden rounded-xl border border-red-500/40 bg-slate-950 p-4">
+            <p class="text-sm text-slate-200">Se eliminarán todos los canales de esta sala y se detendrán sus emisiones. La sala y sus ajustes se conservarán. Esta acción no se puede deshacer.</p>
+            <div class="mt-4 flex flex-wrap justify-end gap-2">
+              <button id="upload-delete-cancel" type="button" class="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-60">Cancelar</button>
+              <button id="upload-delete-submit" type="button" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60">Sí, eliminar lista</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>`;
 
   const cinema = mountRoomAddons(app, session, { player: {
@@ -1203,15 +1230,38 @@ function mountPlayer(session, account) {
 
   const modal = $('#upload-modal');
   const uploadDialog = createDialog(modal, $('#upload-open'), $('#upload-file'));
+  let uploadBusy = false;
+  let uploadCloseTimer = null;
+  const cancelDeleteConfirmation = () => {
+    $('#upload-delete-confirm').classList.add('hidden');
+    $('#upload-delete-open').setAttribute('aria-expanded', 'false');
+  };
+  const syncPlaylistDeleteUi = () => {
+    $('#upload-delete-section').classList.toggle('hidden', !session.hasPlaylist);
+    if (!session.hasPlaylist) cancelDeleteConfirmation();
+  };
+  const setUploadBusy = (busy) => {
+    uploadBusy = busy;
+    for (const id of ['upload-file', 'upload-submit', 'upload-close', 'upload-delete-open', 'upload-delete-cancel', 'upload-delete-submit']) {
+      $('#' + id).disabled = busy;
+    }
+  };
   const openUpload = (event) => {
     event?.preventDefault?.();
+    clearTimeout(uploadCloseTimer);
+    cancelDeleteConfirmation();
+    syncPlaylistDeleteUi();
     uploadDialog.show();
   };
   const closeUpload = async (event) => {
     event?.preventDefault?.();
+    if (uploadBusy) return;
+    clearTimeout(uploadCloseTimer);
     await uploadDialog.hide();
+    uploadMorph.morphTo(Upload, 'snappy');
     $('#upload-form').reset();
     $('#upload-status').textContent = '';
+    cancelDeleteConfirmation();
   };
   $('#upload-open').addEventListener('click', openUpload);
   $('#upload-close').addEventListener('click', closeUpload);
@@ -1219,13 +1269,43 @@ function mountPlayer(session, account) {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeUpload(event);
   });
+  $('#upload-delete-open').addEventListener('click', () => {
+    $('#upload-delete-confirm').classList.remove('hidden');
+    $('#upload-delete-open').setAttribute('aria-expanded', 'true');
+    $('#upload-delete-submit').focus();
+  });
+  $('#upload-delete-cancel').addEventListener('click', () => {
+    cancelDeleteConfirmation();
+    $('#upload-delete-open').focus();
+  });
+  $('#upload-delete-submit').addEventListener('click', async () => {
+    if (uploadBusy || !session.hasPlaylist) return;
+    clearTimeout(uploadCloseTimer);
+    setUploadBusy(true);
+    const status = $('#upload-status');
+    try {
+      status.textContent = 'Eliminando lista de canales…';
+      const next = await inRoom('delete-playlist', { data: { revision: session.revision } });
+      Object.assign(session, next);
+      settings?.refresh(next);
+      setPlaylist([]);
+      syncPlaylistDeleteUi();
+      status.textContent = 'Lista M3U eliminada. Puedes subir otra cuando quieras.';
+      setStatus('La lista M3U se ha eliminado. Sube otra para añadir canales.');
+    } catch (error) {
+      status.textContent = error.message || 'No se pudo eliminar la lista.';
+    } finally {
+      setUploadBusy(false);
+    }
+  });
   $('#upload-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const file = $('#upload-file').files?.[0];
     const status = $('#upload-status');
-    const button = $('#upload-submit');
     if (!file || !/\.m3u$/i.test(file.name) || file.size > 10 * 1024 * 1024) { status.textContent = 'Selecciona un archivo .m3u de hasta 10 MB.'; return; }
-    button.disabled = true;
+    if (uploadBusy) return;
+    clearTimeout(uploadCloseTimer);
+    setUploadBusy(true);
     try {
       status.textContent = 'Preparando lista…';
       const source = await file.text();
@@ -1244,11 +1324,12 @@ function mountPlayer(session, account) {
       Object.assign(session, next);
       settings?.refresh(next);
       setPlaylist(parsed);
+      syncPlaylistDeleteUi();
       status.textContent = 'Lista guardada.';
       uploadMorph.morphTo(Check, 'snappy');
-      setTimeout(() => { closeUpload(); uploadMorph.morphTo(Upload, 'snappy'); }, 900);
+      uploadCloseTimer = setTimeout(() => { closeUpload(); }, 900);
     } catch (error) { status.textContent = error.message || 'No se pudo subir la lista.'; }
-    finally { button.disabled = false; }
+    finally { setUploadBusy(false); }
   });
 
   const settings = session.owner ? mountRoomSettings($('.app-shell'), session, $('#settings-open'), {

@@ -498,6 +498,18 @@ export class RoomsService {
     return roomView(room, who.account);
   }
   playlist(room) { return room.playlist ? unseal(room.playlist, `playlist:${room.slug}`, this.env) : ''; }
+  async deletePlaylist(slug, who, revision) {
+    const old = await this.access(slug, who, true);
+    const room = await mutate(this.store, `room/${slug}`, (current) => {
+      if (!current || current.deleted || current.ownerId !== who.account.id) throw new RoomError('Sala no disponible.', 403);
+      if (current.revision !== revision) throw new RoomError('La sala ha cambiado. Actualiza antes de eliminar la lista.', 409);
+      if (!current.playlist) throw new RoomError('Esta sala no tiene una lista M3U que eliminar.', 409);
+      return { ...current, playlist: null, providers: [], channelCount: 0,
+        detectedMaximum: null, limit: null, revision: current.revision + 1, updated: this.clock() };
+    });
+    await this.clearRoomLeases(old);
+    return roomView(room, who.account);
+  }
   async clearRoomLeases(room) {
     const active = await read(this.store, `leases/room-${room.slug}`);
     const leases = active?.leases || [];

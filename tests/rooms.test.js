@@ -96,6 +96,58 @@ test('invalid uploads preserve the previous list and stale updates cannot overwr
   await assert.rejects(f.service.update(current.slug, who, { limit: null, revision: current.revision }));
 });
 
+test('deleting an M3U clears channels and active streams without deleting the room or guest access', async () => {
+  const f = fixture(), who = await owner(f), other = await owner(f, 'other@example.test');
+  const current = await room(f, who);
+  const visitor = await guest(f);
+  const active = await f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-guest' });
+  assert(active.id);
+  assert.equal((await f.service.status(current.slug, who)).active, 1);
+
+  await assert.rejects(f.service.deletePlaylist(current.slug, visitor, current.revision), { status: 403 });
+  await assert.rejects(f.service.deletePlaylist(current.slug, other, current.revision), { status: 403 });
+  await assert.rejects(f.service.deletePlaylist(current.slug, who, current.revision - 1), { status: 409 });
+  assert.equal(f.service.playlist(await f.service.access(current.slug, visitor)), playlist);
+
+  const cleared = await f.service.deletePlaylist(current.slug, who, current.revision);
+  assert.equal(cleared.hasPlaylist, false);
+  assert.equal(cleared.channelCount, 0);
+  assert.equal(cleared.detectedMaximum, null);
+  assert.equal(cleared.limit, null);
+  assert.equal(cleared.revision, current.revision + 1);
+  assert.equal(f.service.playlist(await f.service.access(current.slug, visitor)), '');
+  assert.equal((await f.service.status(current.slug, who)).active, 0);
+  assert.equal((await read(f.store, `room/${current.slug}`)).deleted, undefined);
+  assert.equal((await f.service.access(current.slug, visitor)).title, current.title);
+  await assert.rejects(f.service.start(current.slug, visitor, { channelId: 1, tab: 'browser-tab-guest' }), { status: 404 });
+  await assert.rejects(f.service.deletePlaylist(current.slug, who, current.revision), { status: 409 });
+
+  const uploaded = await f.service.upload(current.slug, who, { filename: 'otra.m3u', source: playlist, revision: cleared.revision });
+  assert.equal(uploaded.hasPlaylist, true);
+  assert.equal(uploaded.channelCount, 2);
+});
+
+test('the delete-playlist endpoint requires owner authentication and preserves room metadata', async () => {
+  const f = fixture(), who = await owner(f);
+  const current = await room(f, who);
+  const handler = createRoomsHandler({ getStore: () => f.store, env, clock: f.clock });
+  const request = (token, revision) => new Request('https://app.example.test/.netlify/functions/rooms?action=delete-playlist', {
+    method: 'POST',
+    headers: { origin: 'https://app.example.test', 'Content-Type': 'application/json', ...(token ? { cookie: token } : {}) },
+    body: JSON.stringify({ room: current.slug, revision }),
+  });
+  const guestToken = (await f.service.join(current.slug, password)).token;
+  const outsider = await handler(request(`${GUEST_COOKIE}=${guestToken}`, current.revision));
+  assert.equal(outsider.status, 403);
+  const ownerToken = (await f.service.login('owner@example.test', password)).token;
+  const stale = await handler(request(`${ACCOUNT_COOKIE}=${ownerToken}`, current.revision - 1));
+  assert.equal(stale.status, 409);
+  const response = await handler(request(`${ACCOUNT_COOKIE}=${ownerToken}`, current.revision));
+  assert.equal(response.status, 200);
+  assert.deepEqual((({ hasPlaylist, channelCount, slug, title }) => ({ hasPlaylist, channelCount, slug, title }))(await response.json()),
+    { hasPlaylist: false, channelCount: 0, slug: current.slug, title: current.title });
+});
+
 test('chunked uploads reassemble the playlist and incomplete uploads preserve the current list', async () => {
   const f = fixture(), who = await owner(f);
   const created = await f.service.create(who.account, { slug: 'sala-casa', title: 'Mi sala', password, relay: relayForSlug('sala-casa') });

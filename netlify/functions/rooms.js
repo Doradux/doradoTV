@@ -128,6 +128,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       if (action === 'create') { await rateLimit(store, `create:${who.account?.id || ip}`, 8, 3600, clock?.()); return json(await service.create(who.account, input), 201); }
       if (action === 'update') return json(await service.update(slug, who, input));
       if (action === 'delete') { await service.remove(slug, who, input.revision); return json({ ok: true }); }
+      if (action === 'delete-playlist') return json(await service.deletePlaylist(slug, who, input.revision));
       if (action === 'upload-begin') {
         await rateLimit(store, `upload:${who.account?.id || ip}`, 12, 3600, clock?.());
         return json(await service.beginUpload(slug, who, input));
