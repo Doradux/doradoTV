@@ -70,11 +70,16 @@ test('Xtream invalid feeds cannot replace the saved playlist', async () => {
   const current = await service.importXtream(room.slug, who, { ...provider, revision: room.revision });
   const saved = service.playlist(await service.access(room.slug, who));
   service.xtreamFetcher = async () => { throw Error('Provider offline'); };
-  await assert.rejects(service.importXtream(room.slug, who, { ...provider, revision: current.revision }), /Provider offline/);
+  await assert.rejects(service.importXtream(room.slug, who, { ...provider, revision: current.revision }), (error) => error.status === 502 && /catálogo de Xtream/.test(error.message));
   assert.equal(service.playlist(await service.access(room.slug, who)), saved);
-  await assert.rejects(fetchXtreamPlaylist(provider, async (url) => url.searchParams.get('action') === 'get_live_streams' ? {} : []), /lista válida/);
-  const huge = Array.from({ length: 15001 }, (_, i) => ({ stream_id: i + 1 }));
-  await assert.rejects(fetchXtreamPlaylist(provider, async (url) => url.searchParams.get('action') === 'get_live_streams' ? huge : []), /demasiados canales/);
+  await assert.rejects(fetchXtreamPlaylist(provider, async (url) => url.searchParams.get('action') === 'get_live_streams' ? {} : []), /formato no reconocido/);
+  const huge = Array.from({ length: 30001 }, (_, i) => ({ stream_id: i + 1, name: 'Canal ' + i }));
+  const partial = await fetchXtreamPlaylist(provider, async (url) => url.searchParams.get('action') === 'get_live_streams' ? huge : []);
+  assert.equal(partial.truncated, true);
+  assert.equal(partial.total, 30001);
+  assert(partial.count > 0 && partial.count <= 30000);
+  assert(Buffer.byteLength(partial.source) <= 5 * 1024 * 1024);
+  assert.equal(parsePlaylist(partial.source).length, partial.count);
 });
 
 test('Xtream import route requires an owner session and checks room revisions', async () => {
@@ -98,4 +103,56 @@ test('Xtream import route requires an owner session and checks room revisions', 
 test('Xtream providers that only allow HLS receive m3u8 channel URLs', async () => {
   const onlyHls = await fetchXtreamPlaylist({ ...provider, formats: ['m3u8'] }, fetcher);
   assert.equal(parsePlaylist(onlyHls.source)[0].url, provider.origin + '/live/sample-user/sample-secret/5.m3u8');
+});
+
+test('Xtream upstream errors get safe and actionable status codes', async () => {
+  for (const [message, status, expected] of [
+    ['Response too large', 413, /48 MB/],
+    ['Provider timeout', 504, /tardó demasiado/],
+    ['Provider unavailable', 502, /rechazó/],
+  ]) {
+    await assert.rejects(fetchXtreamPlaylist(provider, async (url) => {
+      if (url.searchParams.get('action') === 'get_live_streams') throw new Error(message);
+      return [];
+    }), (error) => {
+      assert.equal(error.status, status);
+      assert.match(error.message, expected);
+      return true;
+    });
+  }
+});
+
+test('an unexpected Xtream catalog failure returns a specific sanitized 502 response', async () => {
+  const { store, room } = await fixture();
+  const handler = createRoomsHandler({
+    getStore: () => store,
+    env: { ...env, DORADO_APP_URL: 'https://app.example.test' },
+    verifyProvider, detect, verifyRelay: async () => ({ valid: true }),
+    xtreamFetcher: async () => { throw new Error('Unavailable remote endpoint'); },
+  });
+  const token = await newSession(store, { kind: 'account', accountId: account.id, version: 1 });
+  const response = await handler(new Request('https://app.example.test/.netlify/functions/rooms?action=import-xtream', {
+    method: 'POST',
+    headers: {
+      origin: 'https://app.example.test',
+      'content-type': 'application/json',
+      cookie: ACCOUNT_COOKIE + '=' + token,
+    },
+    body: JSON.stringify({ room: room.slug, ...provider, revision: room.revision }),
+  }));
+  assert.equal(response.status, 502);
+  const payload = await response.json();
+  assert.match(payload.error, /catálogo de Xtream/);
+  assert(!payload.error.includes(provider.password));
+});
+
+test('an unexpected persistence failure returns a specific sanitized 503 response', async () => {
+  const { service, room, who } = await fixture();
+  service.upload = async () => { throw new Error('Unexpected database failure'); };
+  await assert.rejects(service.importXtream(room.slug, who, { ...provider, revision: room.revision }), (error) => {
+    assert.equal(error.status, 503);
+    assert.match(error.message, /no se pudieron guardar/);
+    assert(!error.message.includes(provider.password));
+    return true;
+  });
 });

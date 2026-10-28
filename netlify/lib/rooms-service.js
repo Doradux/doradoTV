@@ -470,8 +470,23 @@ export class RoomsService {
     const current = await this.access(slug, who, true);
     if (current.revision !== revision) throw new RoomError('La sala ha cambiado. Actualiza antes de importar canales.', 409);
     const provider = await this.checkedProvider({ origin, username, password });
-    const { source } = await this.xtreamFetcher(provider);
-    return this.upload(slug, who, { filename: 'xtream.m3u', source, revision, provider });
+    let imported;
+    try { imported = await this.xtreamFetcher(provider); }
+    catch (error) {
+      if (error instanceof RoomError) throw error;
+      // Never log provider URLs or raw errors: those may contain the password.
+      console.error('[xtream-import] Unexpected catalog error', { errorType: error?.name || 'Error' });
+      throw new RoomError('No se pudo leer el catálogo de Xtream. Comprueba que el proveedor permite obtener canales en directo.', 502);
+    }
+    try {
+      const next = await this.upload(slug, who, { filename: 'xtream.m3u', source: imported.source, revision, provider });
+      return { ...next, xtreamImportedCount: imported.count, xtreamTotalCount: imported.total ?? imported.count,
+        xtreamTruncated: !!imported.truncated };
+    } catch (error) {
+      if (error instanceof RoomError) throw error;
+      console.error('[xtream-import] Unexpected save error', { errorType: error?.name || 'Error' });
+      throw new RoomError('Se obtuvieron los canales de Xtream, pero no se pudieron guardar en la sala. Vuelve a intentarlo.', 503);
+    }
   }
   async upload(slug, who, { filename, source, revision, provider = null }) {
     const old = await this.access(slug, who, true);
@@ -489,7 +504,8 @@ export class RoomsService {
         }
       }
     }
-    const detected = await this.detect(channels, this.env);
+    // An Xtream import uses one already verified account; avoid another network lookup.
+    const detected = provider ? [{ id: channelProvider(channels[0], slug, this.env), maximum: provider.maximum }] : await this.detect(channels, this.env);
     const importedProviderId = provider ? channelProvider(channels[0], slug, this.env) : null;
     const providers = await Promise.all(detected.map(async (entry) => {
       const global = await read(this.store, `leases/${entry.id}`);

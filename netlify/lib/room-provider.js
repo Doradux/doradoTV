@@ -33,11 +33,11 @@ export async function fetchProviderJson(url, { maxBytes = 256 * 1024, timeoutMs 
     const req = send(url, { lookup: (_host, options, callback) => options.all ? callback(null, [pinned]) : callback(null, pinned.address, pinned.family) }, (res) => {
       if (res.statusCode !== 200) { res.resume(); reject(new Error('Provider unavailable')); return; }
       let bytes = 0; const chunks = [];
-      res.on('data', (chunk) => { bytes += chunk.length; if (bytes > Math.min(maxBytes, 16 * 1024 * 1024)) req.destroy(new Error('Response too large')); else chunks.push(chunk); });
+      res.on('data', (chunk) => { bytes += chunk.length; if (bytes > Math.min(maxBytes, 48 * 1024 * 1024)) req.destroy(new Error('Response too large')); else chunks.push(chunk); });
       res.on('error', reject);
       res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (error) { reject(error); } });
     });
-    const timer = setTimeout(() => req.destroy(new Error('Provider timeout')), Math.min(timeoutMs, 15000));
+    const timer = setTimeout(() => req.destroy(new Error('Provider timeout')), Math.min(timeoutMs, 25000));
     req.on('close', () => clearTimeout(timer));
     req.on('error', reject); req.end();
   });

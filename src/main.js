@@ -1365,10 +1365,12 @@ function mountPlayer(session, account) {
         return;
       }
       setPlaylist(parsePlaylist(source));
-      status.textContent = `${next.channelCount.toLocaleString('es')} canales Xtream guardados.`;
+      status.textContent = next.xtreamTruncated
+        ? `Se han guardado ${next.channelCount.toLocaleString('es')} de ${next.xtreamTotalCount.toLocaleString('es')} canales. El catálogo completo supera el límite de esta sala; los canales importados ya pueden reproducirse.`
+        : `${next.channelCount.toLocaleString('es')} canales Xtream guardados.`;
       setStatus('Canales Xtream listos para reproducir.');
       uploadMorph.morphTo(Check, 'snappy');
-      uploadCloseTimer = setTimeout(() => { closeUpload(); }, 1200);
+      if (!next.xtreamTruncated) uploadCloseTimer = setTimeout(() => { closeUpload(); }, 1200);
     } catch (error) {
       status.textContent = error.message || 'No se pudieron importar los canales Xtream.';
     } finally { setUploadBusy(false); }
