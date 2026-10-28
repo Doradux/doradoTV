@@ -466,12 +466,12 @@ export class RoomsService {
       await Promise.all([this.store.delete(`upload/${slug}`), ...keys.map((key) => this.store.delete(key))]);
     }
   }
-  async importXtream(slug, who, { origin, username, password, revision }) {
+  async importXtream(slug, who, { origin, username, password, revision, streamFormat = 'auto' }) {
     const current = await this.access(slug, who, true);
     if (current.revision !== revision) throw new RoomError('La sala ha cambiado. Actualiza antes de importar canales.', 409);
     const provider = await this.checkedProvider({ origin, username, password });
     let imported;
-    try { imported = await this.xtreamFetcher(provider); }
+    try { imported = await this.xtreamFetcher(provider, undefined, streamFormat); }
     catch (error) {
       if (error instanceof RoomError) throw error;
       // Never log provider URLs or raw errors: those may contain the password.

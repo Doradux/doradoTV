@@ -10,6 +10,7 @@ import { TorrentRelay, TorrentFault } from './torrent-service.js';
 import { remuxVideo } from './remux.js';
 import { DirectAudioSessions } from './direct-audio.js';
 import { VodHls } from './vod-hls.js';
+import { proxyLiveStream } from './live-proxy.js';
 
 const SESSION_TTL = 60;
 const IDLE_GRACE = 7;
@@ -150,6 +151,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   closeSync(lock);
   const processes = new Map();
   const errorsByEmission = new Map();
+  const liveTokens = new Map();
   const torrents = torrentFactory || new TorrentRelay({
     directory, maxBytes: torrentMaxBytes, maxActive: torrentMaxActive,
   });
@@ -271,6 +273,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       if (!['starting', 'running'].includes(emission.status)) {
         const child = processes.get(id);
         if (child) { child.kill('SIGTERM'); processes.delete(id); }
+        liveTokens.delete(id);
         rmSync(join(directory, id), { recursive: true, force: true });
         if (now() - emission.last_viewer > 120) {
           errorsByEmission.delete(id);
@@ -283,9 +286,18 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
       if (!processes.has(id)) {
         mkdirSync(output, { recursive: true, mode: 0o700 });
         let stderr = '';
+        // Proxy direct Xtream TS through loopback. Follow upstream redirects in
+        // Node with DNS validation on every hop; FFmpeg sees one local URL only.
+        const needsLiveProxy = DIRECT_LIVE_TS.test(new URL(emission.url).pathname);
+        const port = server.address()?.port;
+        if (needsLiveProxy && !port) throw new Error('El relay todavía no está escuchando.');
+        const liveToken = needsLiveProxy ? randomBytes(32).toString('hex') : null;
+        if (liveToken) liveTokens.set(id, liveToken);
+        const inputUrl = needsLiveProxy
+          ? `http://127.0.0.1:${port}/internal-live/${id}/${liveToken}` : emission.input_url;
         const child = spawnProcess(ffmpeg, [
           '-nostdin', '-hide_banner', '-loglevel', 'error', '-rw_timeout', '15000000', '-user_agent', 'VLC/3.0.18',
-          '-max_redirects', '0', '-headers', `Host: ${emission.host_header}\r\n`, '-i', emission.input_url,
+          '-max_redirects', '0', ...(needsLiveProxy ? [] : ['-headers', `Host: ${emission.host_header}\r\n`]), '-i', inputUrl,
           '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
           '-f', 'hls', '-hls_time', '4', '-hls_list_size', '6', '-hls_delete_threshold', '2',
           '-hls_flags', 'delete_segments+temp_file', '-hls_segment_filename', join(output, 'segment_%09d.ts'), playlist,
@@ -344,6 +356,22 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, mediaOrigin);
     const cors = getCors(request);
+    const liveRequest = url.pathname.match(/^\/internal-live\/([0-9a-f-]{36})\/([a-f0-9]{64})$/);
+    if (liveRequest) {
+      const clientIp = request.socket.remoteAddress || '';
+      if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(clientIp) || request.method !== 'GET' ||
+          liveTokens.get(liveRequest[1]) !== liveRequest[2]) {
+        json(response, 403, { error: 'Solo acceso interno.' }); return;
+      }
+      const emission = registry.transaction((state) => state.emissions[liveRequest[1]]);
+      if (!emission || !['starting', 'running'].includes(emission.status) || !DIRECT_LIVE_TS.test(new URL(emission.url).pathname)) {
+        json(response, 410, { error: 'Emisión no disponible.' }); return;
+      }
+      proxyLiveStream(emission.url, response, {
+        onFailure(message) { errorsByEmission.set(emission.id, message); },
+      });
+      return;
+    }
     if (request.method === 'OPTIONS' && (url.pathname.startsWith('/media/') || url.pathname.startsWith('/torrent-media/') || url.pathname.startsWith('/direct-audio/') || url.pathname.startsWith('/vod/'))) {
       if (!cors) { json(response, 403, { error: 'Origen no permitido.' }); return; }
       response.writeHead(204, cors); response.end(); return;
@@ -664,7 +692,7 @@ export function createRelay({ directory, secret, publicUrl, appOrigin, maxConnec
     }
   });
   vod.port = () => server.address()?.port;
-  return { server, registry, torrents, directAudio, vod, tick, stop() { vod.shutdown(); directAudio.shutdown(); torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); rmSync(lockFile, { force: true }); } };
+  return { server, registry, torrents, directAudio, vod, tick, stop() { vod.shutdown(); directAudio.shutdown(); torrents.close(); for (const child of processes.values()) child.kill('SIGTERM'); processes.clear(); liveTokens.clear(); rmSync(lockFile, { force: true }); } };
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

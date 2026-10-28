@@ -27,7 +27,7 @@ async function fixture() {
   await store.setJSON('account/owner', account);
   const service = new RoomsService(store, {
     env, verifyRelay: async () => ({ valid: true }), verifyProvider, detect,
-    xtreamFetcher: (value) => fetchXtreamPlaylist(value, fetcher),
+    xtreamFetcher: (value, _fetcher, format) => fetchXtreamPlaylist(value, fetcher, format),
   });
   const room = await service.create(account, { slug: 'xtream-sala', title: 'Sala Xtream', password: 'sala-secreta-123', relay });
   return { store, service, room, who: { account } };
@@ -85,7 +85,7 @@ test('Xtream invalid feeds cannot replace the saved playlist', async () => {
 test('Xtream import route requires an owner session and checks room revisions', async () => {
   const { store, room } = await fixture();
   const handler = createRoomsHandler({ getStore: () => store, env: { ...env, DORADO_APP_URL: 'https://app.example.test' }, verifyProvider, detect,
-    xtreamFetcher: (value) => fetchXtreamPlaylist(value, fetcher), verifyRelay: async () => ({ valid: true }) });
+    xtreamFetcher: (value, _fetcher, format) => fetchXtreamPlaylist(value, fetcher, format), verifyRelay: async () => ({ valid: true }) });
   const ownerToken = await newSession(store, { kind: 'account', accountId: account.id, version: 1 });
   const guestToken = await newSession(store, { kind: 'guest', roomId: room.slug, version: 1 });
   const send = (token, cookie) => handler(new Request('https://app.example.test/.netlify/functions/rooms?action=import-xtream', {
@@ -155,4 +155,14 @@ test('an unexpected persistence failure returns a specific sanitized 503 respons
     assert(!error.message.includes(provider.password));
     return true;
   });
+});
+
+
+test('Xtream import accepts explicit HLS preference and rejects formats the provider does not permit', async () => {
+  const { service, room, who } = await fixture();
+  const imported = await service.importXtream(room.slug, who, { ...provider, revision: room.revision, streamFormat: 'm3u8' });
+  assert.equal(imported.channelCount, 2);
+  assert(parsePlaylist(service.playlist(await service.access(room.slug, who))).every((channel) => channel.url.endsWith('.m3u8')));
+  await assert.rejects(service.importXtream(room.slug, who, { ...provider, revision: imported.revision, streamFormat: 'srt' }), /Formato Xtream inválido/);
+  await assert.rejects(fetchXtreamPlaylist({ ...provider, formats: ['ts'] }, fetcher, 'm3u8'), /no anuncia soporte/);
 });

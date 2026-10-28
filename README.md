@@ -125,7 +125,9 @@ La detección consulta la API del proveedor identificado en URLs de tipo `/live/
 
 El límite controla plazas de la app, no las emisiones externas. La caducidad libera conexiones de navegadores desconectados, pero no puede imponer un corte al servidor de origen. El límite configurado menor que el uso actual bloquea nuevas reproducciones hasta que se liberen plazas; no expulsa arbitrariamente a quienes ya estaban viendo.
 
-El relay se usa únicamente para señales HTTP y debe alojarse en un servidor permanente fuera de Netlify. El backend de salas le entrega sesiones temporales; el navegador nunca recibe `DORADO_RELAY_SECRET`. Varias personas viendo el mismo canal comparten una entrada FFmpeg. Cada URL y cada redirección se resuelven y validan contra redes privadas antes de abrirse, FFmpeg recibe una IP fijada y no sigue redirecciones por su cuenta.
+El relay se usa únicamente para señales HTTP y debe alojarse en un servidor permanente fuera de Netlify. El backend de salas le entrega sesiones temporales; el navegador nunca recibe `DORADO_RELAY_SECRET`. Varias personas viendo el mismo canal comparten una entrada FFmpeg. Cada URL y cada redirección se resuelven y validan contra redes privadas antes de abrirse. Para Xtream MPEG-TS, FFmpeg recibe una dirección local de un puente de streaming privado que sigue hasta cuatro redirecciones, fija una IP pública por salto y evita consumir otra conexión con una petición previa; FFmpeg no sigue redirecciones remotas por su cuenta.
+
+La importación Xtream de **Subir lista** permite elegir Automático, MPEG-TS o HLS. Si el proveedor ofrece ambos y falla TS, se puede volver a importar la lista con HLS. El formato elegido se aplica al catálogo de canales; no se modifican las credenciales del relay. Si el proveedor anuncia explícitamente los formatos permitidos, no se permite seleccionar uno que no soporte.
 
 ## Coste y desarrollo
 

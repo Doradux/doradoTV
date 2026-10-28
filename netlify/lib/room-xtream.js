@@ -10,7 +10,8 @@ const safeLabel = (value, fallback = '') => String(value ?? '').replace(/[\r\n\x
 const m3uAttribute = (value) => safeLabel(value).replace(/"/g, '&quot;');
 
 /** Fetch only live TV; never include on-demand movies or series. */
-export async function fetchXtreamPlaylist(account, fetcher = fetchProviderJson) {
+export async function fetchXtreamPlaylist(account, fetcher = fetchProviderJson, streamFormat = 'auto') {
+  if (!['auto', 'ts', 'm3u8'].includes(streamFormat)) throw new RoomError('Formato Xtream inválido.', 400);
   const endpoint = (action) => {
     const url = new URL('/player_api.php', account.origin);
     url.search = new URLSearchParams({ username: account.username, password: account.password, action });
@@ -34,7 +35,12 @@ export async function fetchXtreamPlaylist(account, fetcher = fetchProviderJson) 
   const categories = new Map((Array.isArray(groups) ? groups : []).slice(0, MAX_CHANNELS)
     .map((item) => [String(item?.category_id), safeLabel(item?.category_name, 'General')]));
   if (!Array.isArray(streams)) throw new RoomError('Xtream devolvió un catálogo de canales con un formato no reconocido.', 502);
-  const extension = Array.isArray(account.formats) && account.formats.length && !account.formats.includes('ts') && account.formats.includes('m3u8') ? 'm3u8' : 'ts';
+  const allowedFormats = Array.isArray(account.formats) ? account.formats : [];
+  const extension = streamFormat === 'auto'
+    ? allowedFormats.length && !allowedFormats.includes('ts') && allowedFormats.includes('m3u8') ? 'm3u8' : 'ts'
+    : streamFormat;
+  if (allowedFormats.length && !allowedFormats.includes(extension))
+    throw new RoomError('Tu proveedor Xtream no anuncia soporte para el formato de vídeo seleccionado.', 400);
   const output = ['#EXTM3U'];
   const seen = new Set();
   let count = 0;

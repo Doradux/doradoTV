@@ -288,3 +288,43 @@ test('relay can restart in a container that reuses PID 1 with a stale worker loc
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('Xtream TS playback uses a private loopback proxy without leaking provider credentials to FFmpeg', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dorado-xtream-loopback-'));
+  let lastArgs;
+  const spawnProcess = (_command, args) => {
+    lastArgs = args;
+    const playlist = args.at(-1);
+    mkdirSync(dirname(playlist), { recursive: true });
+    writeFileSync(playlist, '#EXTM3U\n#EXTINF:4,\nsegment_000000001.ts\n');
+    writeFileSync(join(dirname(playlist), 'segment_000000001.ts'), 'video');
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.kill = () => { child.exitCode = 0; };
+    return child;
+  };
+  const source = 'http://provider.example/live/username/private-secret/123.ts';
+  const relay = createRelay({ directory, secret: 'testing-secret', appOrigin: 'https://app.example.test', spawnProcess,
+    resolveChannel: async (url) => ({ original: url, pinned: 'http://8.8.8.8/live/username/private-secret/123.ts', host: 'provider.example' }) });
+  await new Promise((resolve) => relay.server.listen(0, '127.0.0.1', resolve));
+  const base = 'http://127.0.0.1:' + relay.server.address().port;
+  try {
+    const result = await fetch(base + '/start', {
+      method: 'POST', headers: { Authorization: 'Bearer testing-secret', 'Content-Type': 'application/json',
+        'X-Forwarded-Host': 'relay.example.com', 'X-Forwarded-Proto': 'https' },
+      body: JSON.stringify({ channel: { name: 'Canal', url: source }, user_id: 'owner', name: 'Viewer', tab: 'one' }),
+    });
+    assert.equal(result.status, 200);
+    const input = lastArgs[lastArgs.indexOf('-i') + 1];
+    assert.match(input, /^http:\/\/127\.0\.0\.1:\d+\/internal-live\//);
+    assert(!input.includes('private-secret'));
+    assert.equal(lastArgs.includes('-headers'), false);
+    const data = await result.json();
+    const unauthorized = await fetch(base + '/internal-live/' + data.emission_id + '/' + '0'.repeat(64));
+    assert.equal(unauthorized.status, 403);
+  } finally {
+    relay.stop();
+    await new Promise((resolve) => relay.server.close(resolve));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

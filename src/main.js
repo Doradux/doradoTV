@@ -143,6 +143,15 @@ function mountPlayer(session, account) {
               <label for="xtream-password" class="mb-1.5 block text-sm font-medium text-slate-200">Contraseña</label>
               <input id="xtream-password" type="password" required maxlength="256" autocomplete="off" data-lpignore="true" spellcheck="false" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white focus:border-amber-400 focus:outline-none" />
             </div>
+            <div>
+              <label for="xtream-format" class="mb-1.5 block text-sm font-medium text-slate-200">Formato de los canales</label>
+              <select id="xtream-format" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white focus:border-amber-400 focus:outline-none">
+                <option value="auto">Automático (según el proveedor)</option>
+                <option value="ts">MPEG-TS (.ts)</option>
+                <option value="m3u8">HLS (.m3u8)</option>
+              </select>
+              <p class="mt-1 text-xs text-slate-500">Si UHF reproduce los canales y MPEG-TS falla aquí, vuelve a importar la lista con HLS.</p>
+            </div>
             <p id="xtream-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p>
             <button id="xtream-submit" type="submit" class="w-full rounded-xl border border-amber-400 bg-amber-400/10 px-4 py-3 font-semibold text-amber-300 transition hover:bg-amber-400/20 disabled:opacity-60">Obtener canales Xtream</button>
           </form>
@@ -1279,7 +1288,7 @@ function mountPlayer(session, account) {
   };
   const setUploadBusy = (busy) => {
     uploadBusy = busy;
-    for (const id of ['upload-file', 'upload-submit', 'upload-close', 'upload-delete-open', 'upload-delete-cancel', 'upload-delete-submit', 'xtream-origin', 'xtream-user', 'xtream-password', 'xtream-submit']) {
+    for (const id of ['upload-file', 'upload-submit', 'upload-close', 'upload-delete-open', 'upload-delete-cancel', 'upload-delete-submit', 'xtream-origin', 'xtream-user', 'xtream-password', 'xtream-format', 'xtream-submit']) {
       $('#' + id).disabled = busy;
     }
   };
@@ -1347,6 +1356,7 @@ function mountPlayer(session, account) {
       origin: $('#xtream-origin').value.trim(),
       username: $('#xtream-user').value.trim(),
       password: $('#xtream-password').value,
+      streamFormat: $('#xtream-format').value,
       revision: session.revision,
     };
     setUploadBusy(true);
