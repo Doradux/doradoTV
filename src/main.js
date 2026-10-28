@@ -146,7 +146,7 @@ function mountPlayer(session, account) {
             <p id="xtream-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p>
             <button id="xtream-submit" type="submit" class="w-full rounded-xl border border-amber-400 bg-amber-400/10 px-4 py-3 font-semibold text-amber-300 transition hover:bg-amber-400/20 disabled:opacity-60">Obtener canales Xtream</button>
           </form>
-          <p class="mt-2 text-xs text-slate-500">Para emitir canales HTTP se necesita el relay privado configurado en Ajustes de la sala.</p>
+          <p id="xtream-relay-note" class="mt-2 text-xs text-slate-400" role="status" aria-live="polite"></p>
         </section>
         <div id="upload-delete-section" class="mt-5 border-t border-slate-700 pt-4 ${session.hasPlaylist ? '' : 'hidden'}">
           <p class="mb-3 text-sm text-slate-400">¿Ya no necesitas la lista guardada en esta sala?</p>
@@ -205,7 +205,19 @@ function mountPlayer(session, account) {
   let onlyFavorites = false;
   let playbackToken = 0;
   let playbackLease = null;
-  let relayStatus = { configured: true, ready: false };
+  let relayStatus = { configured: !!session.relayConfigured, ready: false };
+  let relayChecked = false;
+  function updateXtreamRelayNote() {
+    const note = $('#xtream-relay-note');
+    if (!note) return;
+    note.textContent = !relayStatus.configured
+      ? 'Esta sala no tiene relay privado configurado. Añádelo en Ajustes de la sala para emitir canales HTTP.'
+      : !relayChecked
+        ? 'Comprobando el relay privado asociado a esta sala…'
+        : relayStatus.ready
+          ? 'Relay privado conectado. Los canales HTTP se emitirán desde el servidor de esta sala.'
+          : 'El relay de esta sala está configurado, pero no responde ahora. Comprueba su estado antes de emitir canales HTTP.';
+  }
   let relayCheckCount = 0;
   let relayHealthTimer = null;
   async function probeRelay() {
@@ -216,6 +228,8 @@ function mountPlayer(session, account) {
     try {
       const result = await inRoom('relay-health');
       relayStatus = result;
+      relayChecked = true;
+      updateXtreamRelayNote();
       if (!result.configured) {
         $('#relay-health').classList.add('is-offline');
         $('#relay-health-text').textContent = session.owner
@@ -240,6 +254,8 @@ function mountPlayer(session, account) {
       }
     } catch {
       relayStatus.ready = false;
+      relayChecked = true;
+      updateXtreamRelayNote();
       $('#relay-health').classList.add('is-offline');
       $('#relay-health-text').textContent = 'No se pudo comprobar el relay.';
       $('#relay-health-retry').hidden = false;
@@ -1272,6 +1288,7 @@ function mountPlayer(session, account) {
     clearTimeout(uploadCloseTimer);
     cancelDeleteConfirmation();
     syncPlaylistDeleteUi();
+    updateXtreamRelayNote();
     uploadDialog.show();
   };
   const closeUpload = async (event) => {
@@ -1391,11 +1408,20 @@ function mountPlayer(session, account) {
   });
 
   const settings = session.owner ? mountRoomSettings($('.app-shell'), session, $('#settings-open'), {
-    onUpdate(next) { Object.assign(session, next); $('#current-room-title').textContent = next.title; refreshConnections(); },
+    onUpdate(next) {
+      Object.assign(session, next);
+      $('#current-room-title').textContent = next.title;
+      relayStatus = { configured: !!next.relayConfigured, ready: false };
+      relayChecked = false;
+      updateXtreamRelayNote();
+      probeRelay();
+      refreshConnections();
+    },
     onRevoke() { stop(); refreshConnections(); },
   }) : null;
   window.addEventListener('pagehide', () => settings?.destroy(), { once: true });
 
+  updateXtreamRelayNote();
   probeRelay();
   window.addEventListener('pagehide', () => clearTimeout(relayHealthTimer), { once: true });
   const playlistLoaded = session.hasPlaylist ? loadPlaylist() : Promise.resolve();
