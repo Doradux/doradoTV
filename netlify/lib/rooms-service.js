@@ -573,7 +573,11 @@ export class RoomsService {
     const channel = parsePlaylist(this.playlist(room)).find((item) => item.id === Number(channelId));
     if (!channel) throw new RoomError('El canal ya no está disponible.', 404);
     const protocol = new URL(channel.url).protocol;
-    const needsRelay = protocol === 'http:';
+    // Xtream HTTPS MPEG-TS cannot be fetched by most browsers because of
+    // cross-origin restrictions. Let the room relay ingest and package it as
+    // same-origin-compatible HLS, just like plain HTTP live channels.
+    const needsRelay = protocol === 'http:' || (protocol === 'https:' &&
+      channel.url.toLowerCase().split('?')[0].endsWith('.ts') && providerAccount(channel.url));
     const relay = this.relayFor(room);
     if (needsRelay && !relay.configured) throw new RoomError('Esta sala no tiene relay configurado. Pide al propietario que lo configure en Ajustes.', 503);
     const provider = channelProvider(channel, slug, this.env);

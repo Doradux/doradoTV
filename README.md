@@ -119,7 +119,7 @@ Las pruebas automatizadas de Google utilizan tokens firmados con claves de prueb
 
 ## Reproducción y conexiones
 
-Las señales HTTPS se reproducen directamente desde el proveedor. Los canales cuya URL es HTTP se envían al [relay persistente](relay/README.md), que los convierte a HLS y los publica mediante HTTPS; Netlify solo controla la sesión y nunca transporta el vídeo. Si el relay no está configurado, los canales HTTP muestran un error de configuración en lugar de intentar mixed content.
+Las señales HTTPS habituales se reproducen directamente desde el proveedor. **Excepción:** los canales Xtream MPEG-TS (`/live/usuario/contraseña/id.ts`) por HTTPS también se envían al [relay persistente](relay/README.md), ya que los navegadores suelen bloquear o no decodificar estas señales directamente. Los canales HTTP se envían igualmente al relay, que los convierte a HLS y los publica por HTTPS. Netlify solo controla la sesión y nunca transporta el vídeo. Cuando una señal requiere el relay, la sala debe tenerlo configurado.
 
 La detección consulta la API del proveedor identificado en URLs de tipo `/live/usuario/contraseña/id.ts` o `.m3u8`; no abre emisiones de prueba para descubrir el límite. Solo se aceptan respuestas con un entero positivo. Un error temporal conserva un máximo conocido para esa cuenta. Para una lista con varias cuentas, la configuración de sala usa el menor máximo conocido, y cada cuenta mantiene además su propio contador compartido. Las consultas están acotadas a 8 cuentas por subida, con DNS validado, bloqueo de direcciones privadas, sin redirecciones y límites de tiempo/tamaño.
 

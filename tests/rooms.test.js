@@ -393,3 +393,27 @@ test('usernames are unique regardless of case and can be used to sign in', async
   assert.equal(signedIn.account.username, 'owner');
   await assert.rejects(f.service.login('OWNER', 'wrong'), { status: 401 });
 });
+
+test('HTTPS Xtream MPEG-TS uses room relay instead of handing CORS-restricted stream to browser', async () => {
+  const f = fixture(), who = await owner(f);
+  const calls = [];
+  f.service.testRelayClient = {
+    configured: true,
+    async start(channel) {
+      calls.push(channel.url);
+      return { sessionId: 'xtream-relay-session', emissionId: 'xtream-relay-emission',
+        url: 'https://relay.example.test/media/123/index.m3u8?token=sample' };
+    },
+    async ping() { return { status: 'running', kicked: false }; },
+  };
+  const created = await f.service.create(who.account, { slug: 'sala-https-ts', title: 'HTTPS TS', password, relay: relayForSlug('sala-https-ts') });
+  const tsUrl = 'https://provider.example.test/live/viewer/secret/321.ts';
+  const source = '#EXTM3U\n#EXTINF:-1,HTTPS TS\n' + tsUrl;
+  const saved = await f.service.upload(created.slug, who, { filename: 'canales.m3u', source, revision: created.revision });
+  const visitor = await guest(f, saved.slug);
+  const started = await f.service.start(saved.slug, visitor, { channelId: 1, tab: 'browser-https-ts' });
+  assert.equal(started.url, 'https://relay.example.test/media/123/index.m3u8?token=sample');
+  assert.deepEqual(calls, [tsUrl]);
+  const lease = (await read(f.store, 'leases/room-' + saved.slug)).leases[0];
+  assert.equal(lease.relaySessionId, 'xtream-relay-session');
+});

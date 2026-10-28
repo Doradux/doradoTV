@@ -66,6 +66,12 @@ test('Xtream direct TS streams are DNS-pinned without opening an extra provider 
     assert.equal(result.pinned, `http://1.1.1.1${path}`);
     assert.equal(result.host, 'provider.example');
   }
+  const httpsXtream = await resolveHttpChannel('https://provider.example/live/user/secret/123.ts',
+    async () => [{ address: '8.8.8.8', family: 4 }],
+    async () => { throw Error('HTTPS live TS must not consume a preflight slot'); });
+  assert.equal(httpsXtream.original, 'https://provider.example/live/user/secret/123.ts');
+  await assert.rejects(resolveHttpChannel('https://provider.example/private/index.m3u8',
+    async () => [{ address: '8.8.8.8', family: 4 }]), /solo acepta/);
   await assert.rejects(resolveHttpChannel('http://provider.example/live/user/secret/123.ts',
     async () => [{ address: '127.0.0.1', family: 4 }],
     async () => { throw new Error('Must not connect to private IP'); }), /red pública/);

@@ -58,7 +58,9 @@ function publicAddress(address) {
 async function pinHttpChannel(value, resolver = lookup) {
   let url;
   try { url = new URL(value); } catch { throw new Error('Canal inválido.'); }
-  if (url.protocol !== 'http:' || url.username || url.password) throw new Error('El relay solo acepta señales HTTP públicas.');
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
+      (url.protocol === 'https:' && !DIRECT_LIVE_TS.test(url.pathname)))
+    throw new Error('El relay solo acepta señales HTTP públicas o emisiones Xtream HTTPS MPEG-TS.');
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const addresses = await Promise.race([
     resolver(hostname, { all: true }),
