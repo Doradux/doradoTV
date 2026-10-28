@@ -3,6 +3,7 @@ import { parsePlaylist } from '../../src/playlist.js';
 import { RoomError, mutate, read } from './room-store.js';
 import { hashPassword, verifyPassword, digest, secretToken, seal, unseal, newSession, nowSeconds } from './room-security.js';
 import { detectProviders, channelProvider, currentProgram, validateProviderCredentials, providerAccount } from './room-provider.js';
+import { fetchXtreamPlaylist } from './room-xtream.js';
 import { createRelayClient, normalizeRelay } from './room-relay.js';
 
 export const MAX_PLAYLIST_BYTES = 10 * 1024 * 1024;
@@ -27,11 +28,12 @@ export function roomView(room, account) {
     relayConfigured: !!room.relayCredentials, relayHost: room.ownerId === account?.id ? (room.relayHost || null) : null };
 }
 export class RoomsService {
-  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, verifyProvider = validateProviderCredentials, program = currentProgram, sendMail, relay, verifyRelay, relayFactory = createRelayClient } = {}) {
+  constructor(store, { env = process.env, clock = nowSeconds, detect = detectProviders, verifyProvider = validateProviderCredentials, xtreamFetcher = fetchXtreamPlaylist, program = currentProgram, sendMail, relay, verifyRelay, relayFactory = createRelayClient } = {}) {
     this.store = store; this.env = env; this.clock = clock; this.detect = detect; this.verifyProvider = verifyProvider; this.program = program; this.sendMail = sendMail;
     // Injected relay is for isolated tests; runtime always selects the room-specific relay.
     this.testRelayClient = relay || null;
     this.relayFactory = relayFactory;
+    this.xtreamFetcher = xtreamFetcher;
     this.verifyRelay = verifyRelay || ((cfg) => createRelayClient(cfg).verify());
   }
   relayFor(room) {
@@ -464,15 +466,22 @@ export class RoomsService {
       await Promise.all([this.store.delete(`upload/${slug}`), ...keys.map((key) => this.store.delete(key))]);
     }
   }
-  async upload(slug, who, { filename, source, revision }) {
+  async importXtream(slug, who, { origin, username, password, revision }) {
+    const current = await this.access(slug, who, true);
+    if (current.revision !== revision) throw new RoomError('La sala ha cambiado. Actualiza antes de importar canales.', 409);
+    const provider = await this.checkedProvider({ origin, username, password });
+    const { source } = await this.xtreamFetcher(provider);
+    return this.upload(slug, who, { filename: 'xtream.m3u', source, revision, provider });
+  }
+  async upload(slug, who, { filename, source, revision, provider = null }) {
     const old = await this.access(slug, who, true);
     if (typeof filename !== 'string' || !/\.m3u$/i.test(filename)) throw new RoomError('Selecciona un archivo .m3u.');
     if (typeof source !== 'string' || Buffer.byteLength(source) > MAX_PLAYLIST_BYTES) throw new RoomError('La lista debe ocupar como máximo 10 MB.');
     if (!source.replace(/^\uFEFF/, '').trimStart().startsWith('#EXTM3U')) throw new RoomError('El contenido no es una lista M3U válida.');
     const channels = parsePlaylist(source);
     if (!channels.length) throw new RoomError('El archivo no contiene canales válidos.');
-    if (old.providerCredentials) {
-      const allowed = JSON.parse(unseal(old.providerCredentials, 'provider:' + slug, this.env));
+    if (provider || old.providerCredentials) {
+      const allowed = provider || JSON.parse(unseal(old.providerCredentials, 'provider:' + slug, this.env));
       for (const channel of channels) {
         const found = providerAccount(channel.url);
         if (found && (found.origin !== allowed.origin || found.username !== allowed.username || found.password !== allowed.password)) {
@@ -481,19 +490,29 @@ export class RoomsService {
       }
     }
     const detected = await this.detect(channels, this.env);
-    const providers = await Promise.all(detected.map(async (provider) => {
-      const global = await read(this.store, `leases/${provider.id}`);
-      return { ...provider, maximum: provider.maximum ?? old.providers.find((item) => item.id === provider.id)?.maximum ?? global?.maximum ?? null };
+    const importedProviderId = provider ? channelProvider(channels[0], slug, this.env) : null;
+    const providers = await Promise.all(detected.map(async (entry) => {
+      const global = await read(this.store, `leases/${entry.id}`);
+      const observed = entry.maximum ?? old.providers.find((item) => item.id === entry.id)?.maximum ?? global?.maximum ?? null;
+      const importedMax = entry.id === importedProviderId ? provider?.maximum : null;
+      return { ...entry, maximum: importedMax === null || importedMax === undefined ? observed : Math.min(observed ?? importedMax, importedMax) };
     }));
     const known = providers.map((item) => item.maximum).filter((value) => value !== null);
     const maximum = known.length ? Math.min(...known) : null;
     const playlist = seal(source, `playlist:${slug}`, this.env);
+    const oldProvider = old.providerCredentials ? JSON.parse(unseal(old.providerCredentials, 'provider:' + slug, this.env)) : null;
+    const providerChanged = !!provider && (!oldProvider || oldProvider.origin !== provider.origin || oldProvider.username !== provider.username || oldProvider.password !== provider.password);
+    const encryptedProvider = provider ? seal(JSON.stringify(provider), 'provider:' + slug, this.env) : null;
     const room = await mutate(this.store, `room/${slug}`, (current) => {
       if (current.deleted || current.ownerId !== who.account.id) throw new RoomError('Sala no disponible.', 403);
       if (current.revision !== revision) throw new RoomError('La sala ha cambiado. Actualiza antes de subir la lista.', 409);
       return { ...current, playlist, providers, detectedMaximum: maximum, channelCount: channels.length,
+        providerCredentials: encryptedProvider || current.providerCredentials,
+        providerHost: provider ? new URL(provider.origin).hostname : current.providerHost,
+        version: providerChanged ? current.version + 1 : current.version,
         limit: maximum === null ? current.limit : Math.min(current.limit ?? maximum, maximum), revision: current.revision + 1, updated: this.clock() };
     });
+    if (providerChanged) await this.clearRoomLeases(old);
     await Promise.all(providers.filter((item) => item.maximum !== null).map((item) => mutate(this.store, `leases/${item.id}`, (state) => ({ ...state, leases: state?.leases || [], maximum: item.maximum }))));
     return roomView(room, who.account);
   }

@@ -20,7 +20,7 @@ export function publicAddress(address) {
   try { return ipaddr.process(address).range() === 'unicast'; } catch { return false; }
 }
 // Pin the validated DNS result to the actual connection. Do not follow redirects.
-export async function fetchProviderJson(url) {
+export async function fetchProviderJson(url, { maxBytes = 256 * 1024, timeoutMs = 4000 } = {}) {
   if (!['https:', 'http:'].includes(url.protocol) || (url.port && !['80', '443', '8000', '8080', '25461'].includes(url.port))) throw new Error('Unsupported provider');
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const addresses = await Promise.race([lookup(hostname, { all: true }), new Promise((_, reject) => {
@@ -33,11 +33,11 @@ export async function fetchProviderJson(url) {
     const req = send(url, { lookup: (_host, options, callback) => options.all ? callback(null, [pinned]) : callback(null, pinned.address, pinned.family) }, (res) => {
       if (res.statusCode !== 200) { res.resume(); reject(new Error('Provider unavailable')); return; }
       let bytes = 0; const chunks = [];
-      res.on('data', (chunk) => { bytes += chunk.length; if (bytes > 256 * 1024) req.destroy(new Error('Response too large')); else chunks.push(chunk); });
+      res.on('data', (chunk) => { bytes += chunk.length; if (bytes > Math.min(maxBytes, 16 * 1024 * 1024)) req.destroy(new Error('Response too large')); else chunks.push(chunk); });
       res.on('error', reject);
       res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (error) { reject(error); } });
     });
-    const timer = setTimeout(() => req.destroy(new Error('Provider timeout')), 4000);
+    const timer = setTimeout(() => req.destroy(new Error('Provider timeout')), Math.min(timeoutMs, 15000));
     req.on('close', () => clearTimeout(timer));
     req.on('error', reject); req.end();
   });
@@ -128,5 +128,8 @@ export async function validateProviderCredentials(input, fetcher = fetchProvider
       ['Disabled', 'Expired', 'Banned'].includes(String(result?.user_info?.status || '')))
     throw new Error('El proveedor rechazó las credenciales o la suscripción está inactiva.');
   const max = Number(result?.user_info?.max_connections);
-  return { origin, username, password, maximum: Number.isSafeInteger(max) && max > 0 ? max : null };
+  const formats = Array.isArray(result?.user_info?.allowed_output_formats)
+    ? result.user_info.allowed_output_formats.filter((value) => value === 'ts' || value === 'm3u8')
+    : [];
+  return { origin, username, password, maximum: Number.isSafeInteger(max) && max > 0 ? max : null, formats };
 }

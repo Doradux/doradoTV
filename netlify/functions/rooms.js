@@ -5,7 +5,7 @@ import { mailReady, sendAccountMail, reportReady, sendContentNotice } from '../l
 import { googleClientId, beginGoogleSignIn, consumeGoogleSignIn, verifyGoogleAccessToken, GOOGLE_COOKIE, verifyGoogleCredential } from '../lib/room-google.js';
 
 const json = (value, status = 200, headers = {}) => Response.json(value, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', ...headers } });
-export function createRoomsHandler({ getStore = roomStore, env = process.env, sendMail = (email, token, kind) => sendAccountMail(email, token, kind, env), captcha = checkCaptcha, googleVerify = verifyGoogleCredential, detect, clock, verifyRelay, sendNotice = sendContentNotice } = {}) {
+export function createRoomsHandler({ getStore = roomStore, env = process.env, sendMail = (email, token, kind) => sendAccountMail(email, token, kind, env), captcha = checkCaptcha, googleVerify = verifyGoogleCredential, detect, clock, verifyRelay, verifyProvider, xtreamFetcher, sendNotice = sendContentNotice } = {}) {
   return async (request, context = {}) => {
     try {
       const url = new URL(request.url), action = url.searchParams.get('action');
@@ -17,7 +17,7 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       }
       masterKey(env);
       const store = getStore();
-      const service = new RoomsService(store, { env, sendMail, detect, clock, verifyRelay });
+      const service = new RoomsService(store, { env, sendMail, detect, clock, verifyRelay, verifyProvider, xtreamFetcher });
       const who = await identity(store, request, clock?.());
       if (request.method === 'GET') {
         const slug = normalizeRoom(url.searchParams.get('room'));
@@ -135,6 +135,10 @@ export function createRoomsHandler({ getStore = roomStore, env = process.env, se
       }
       if (action === 'upload-chunk') return json(await service.uploadChunk(slug, who, input));
       if (action === 'upload-commit') return json(await service.commitUpload(slug, who, input));
+      if (action === 'import-xtream') {
+        await rateLimit(store, `xtream-import:${who.account?.id || ip}`, 8, 3600, clock?.());
+        return json(await service.importXtream(slug, who, input));
+      }
       if (action === 'vod-start') {
         await rateLimit(store, 'vod-start:' + (who.sessionId || ip), 20, 600, clock?.());
         return json(await service.startVod(slug, who, input));

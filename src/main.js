@@ -127,6 +127,27 @@ function mountPlayer(session, account) {
           <p id="upload-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p>
           <button id="upload-submit" type="submit" class="w-full rounded-xl bg-amber-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">Guardar lista</button>
         </form>
+        <section class="mt-6 border-t border-slate-700 pt-5" aria-labelledby="xtream-title">
+          <h3 id="xtream-title" class="text-base font-bold text-white">Conectar con Xtream</h3>
+          <p class="mt-2 text-sm text-slate-400">Introduce los datos de tu proveedor para obtener los canales en directo. Se guardarán cifrados y podrás reproducirlos desde esta sala. Sustituye la lista actual si ya existe.</p>
+          <form id="xtream-form" class="mt-4 space-y-3" autocomplete="off" data-lpignore="true">
+            <div>
+              <label for="xtream-origin" class="mb-1.5 block text-sm font-medium text-slate-200">URL del servidor</label>
+              <input id="xtream-origin" type="url" placeholder="http://proveedor.example:8080" required autocomplete="off" spellcheck="false" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white placeholder:text-slate-500 focus:border-amber-400 focus:outline-none" />
+            </div>
+            <div>
+              <label for="xtream-user" class="mb-1.5 block text-sm font-medium text-slate-200">Usuario</label>
+              <input id="xtream-user" type="text" required maxlength="128" autocomplete="off" autocapitalize="off" spellcheck="false" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white focus:border-amber-400 focus:outline-none" />
+            </div>
+            <div>
+              <label for="xtream-password" class="mb-1.5 block text-sm font-medium text-slate-200">Contraseña</label>
+              <input id="xtream-password" type="password" required maxlength="256" autocomplete="off" data-lpignore="true" spellcheck="false" class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white focus:border-amber-400 focus:outline-none" />
+            </div>
+            <p id="xtream-status" class="min-h-5 text-sm text-slate-400" role="status" aria-live="polite"></p>
+            <button id="xtream-submit" type="submit" class="w-full rounded-xl border border-amber-400 bg-amber-400/10 px-4 py-3 font-semibold text-amber-300 transition hover:bg-amber-400/20 disabled:opacity-60">Obtener canales Xtream</button>
+          </form>
+          <p class="mt-2 text-xs text-slate-500">Para emitir canales HTTP se necesita el relay privado configurado en Ajustes de la sala.</p>
+        </section>
         <div id="upload-delete-section" class="mt-5 border-t border-slate-700 pt-4 ${session.hasPlaylist ? '' : 'hidden'}">
           <p class="mb-3 text-sm text-slate-400">¿Ya no necesitas la lista guardada en esta sala?</p>
           <button id="upload-delete-open" type="button" aria-expanded="false" aria-controls="upload-delete-confirm" class="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/50 px-4 py-2.5 text-sm font-semibold text-red-300 transition hover:bg-red-500/10 disabled:opacity-60">${iconSvg(Trash2, 'h-4 w-4')} Eliminar lista actual</button>
@@ -1242,7 +1263,7 @@ function mountPlayer(session, account) {
   };
   const setUploadBusy = (busy) => {
     uploadBusy = busy;
-    for (const id of ['upload-file', 'upload-submit', 'upload-close', 'upload-delete-open', 'upload-delete-cancel', 'upload-delete-submit']) {
+    for (const id of ['upload-file', 'upload-submit', 'upload-close', 'upload-delete-open', 'upload-delete-cancel', 'upload-delete-submit', 'xtream-origin', 'xtream-user', 'xtream-password', 'xtream-submit']) {
       $('#' + id).disabled = busy;
     }
   };
@@ -1260,7 +1281,9 @@ function mountPlayer(session, account) {
     await uploadDialog.hide();
     uploadMorph.morphTo(Upload, 'snappy');
     $('#upload-form').reset();
+    $('#xtream-form').reset();
     $('#upload-status').textContent = '';
+    $('#xtream-status').textContent = '';
     cancelDeleteConfirmation();
   };
   $('#upload-open').addEventListener('click', openUpload);
@@ -1297,6 +1320,41 @@ function mountPlayer(session, account) {
     } finally {
       setUploadBusy(false);
     }
+  });
+  $('#xtream-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (uploadBusy) return;
+    clearTimeout(uploadCloseTimer);
+    const status = $('#xtream-status');
+    const credentials = {
+      origin: $('#xtream-origin').value.trim(),
+      username: $('#xtream-user').value.trim(),
+      password: $('#xtream-password').value,
+      revision: session.revision,
+    };
+    setUploadBusy(true);
+    try {
+      status.textContent = 'Conectando con Xtream y obteniendo los canales…';
+      const next = await inRoom('import-xtream', { data: credentials });
+      Object.assign(session, next);
+      settings?.refresh(next);
+      syncPlaylistDeleteUi();
+      $('#xtream-password').value = '';
+      status.textContent = `${next.channelCount.toLocaleString('es')} canales importados. Cargando lista…`;
+      let source;
+      try { ({ source } = await inRoom('playlist')); }
+      catch {
+        status.textContent = 'Los canales están guardados, pero no se pudo actualizar la vista. Recarga la página.';
+        return;
+      }
+      setPlaylist(parsePlaylist(source));
+      status.textContent = `${next.channelCount.toLocaleString('es')} canales Xtream guardados.`;
+      setStatus('Canales Xtream listos para reproducir.');
+      uploadMorph.morphTo(Check, 'snappy');
+      uploadCloseTimer = setTimeout(() => { closeUpload(); }, 1200);
+    } catch (error) {
+      status.textContent = error.message || 'No se pudieron importar los canales Xtream.';
+    } finally { setUploadBusy(false); }
   });
   $('#upload-form').addEventListener('submit', async (event) => {
     event.preventDefault();
